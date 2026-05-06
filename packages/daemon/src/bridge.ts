@@ -60,6 +60,18 @@ async function main(): Promise<void> {
   const search = new SearchIndex(vault);
   search.start();
   const auditLog = new AuditLog(VAULT_PATH!);
+
+  // Push-Channel: jedes Vault-Event geht als unsolicited Notification an die
+  // App, damit die UI live aktualisiert ohne pollen zu müssen. Notifications
+  // haben kein `id`-Feld — die App unterscheidet so von Responses.
+  vault.on((e) => {
+    if (e.kind === "remove") {
+      send({ event: "vault_changed", kind: "remove", memory_id: e.id });
+    } else {
+      send({ event: "vault_changed", kind: e.kind, memory_id: e.memory.fm.id });
+    }
+  });
+
   process.stderr.write("[bridge] ready\n");
 
   const rl = readline.createInterface({ input: process.stdin });

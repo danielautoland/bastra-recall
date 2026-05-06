@@ -25,3 +25,18 @@ export type { Memory, MemoryType, Frontmatter } from "./schema.js";
 
 export { detectTopics, detectProject, extractContentExcerpt } from "./topics.js";
 export type { ToolIntent, TopicResult } from "./topics.js";
+
+export {
+  AuditLog,
+  trashPathFor,
+  moveToTrash,
+  restoreFromTrash,
+} from "./audit-log.js";
+export type { AuditEntry, AuditOperation, AuditActor } from "./audit-log.js";
+
+export {
+  AuditContext,
+  auditedSave,
+  auditedSoftDelete,
+  auditedRestore,
+} from "./audit-save.js";

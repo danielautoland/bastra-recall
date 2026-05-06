@@ -23,9 +23,12 @@
 import {
   Vault,
   SearchIndex,
-  saveMemory,
-  deleteMemoryFile,
   SaveMemoryInput,
+  AuditLog,
+  AuditContext,
+  auditedSave,
+  auditedSoftDelete,
+  auditedRestore,
 } from "@nexus-recall/core";
 import readline from "node:readline";
 
@@ -56,6 +59,7 @@ async function main(): Promise<void> {
   vault.startWatching();
   const search = new SearchIndex(vault);
   search.start();
+  const auditLog = new AuditLog(VAULT_PATH!);
   process.stderr.write("[bridge] ready\n");
 
   const rl = readline.createInterface({ input: process.stdin });
@@ -105,35 +109,123 @@ async function main(): Promise<void> {
           break;
         }
         case "save_memory": {
-          const parsed = SaveMemoryInput.safeParse(params);
+          // Caller-supplied audit_context wird vor dem Save-Schema getrennt;
+          // Default-Actor für Mac-App-Aufrufe ist "user" (kein expliziter Reason nötig).
+          const rawParams = (params ?? {}) as Record<string, unknown>;
+          const ctxRaw = rawParams.audit_context as Record<string, unknown> | undefined;
+          const { audit_context: _ignored, ...rest } = rawParams;
+          void _ignored;
+          const ctx = AuditContext.parse(ctxRaw ?? { actor: "user" });
+          const parsed = SaveMemoryInput.safeParse(rest);
           if (!parsed.success) {
             throw new Error(parsed.error.message);
           }
-          // saveMemory returns a promise — we resolve it inline below
-          saveMemory(VAULT_PATH!, parsed.data)
-            .then(async (saveResult) => {
-              await vault.reindexFile(saveResult.file_path);
-              send({ id, result: saveResult });
+          auditedSave({
+            vault,
+            auditLog,
+            vaultRoot: VAULT_PATH!,
+            input: parsed.data,
+            context: ctx,
+          })
+            .then(async ({ result, audit }) => {
+              await vault.reindexFile(result.file_path);
+              send({ id, result: { ...result, audit_id: audit.id } });
             })
             .catch((err: Error) => {
               send({ id, error: { message: err.message } });
             });
-          return; // async branch handles its own send()
+          return;
         }
         case "delete_memory": {
           const targetId = String(params?.id ?? "").trim();
           if (!targetId) throw new Error("id is required");
-          const memory = vault.get(targetId);
-          if (!memory) throw new Error(`memory not found: ${targetId}`);
-          deleteMemoryFile(memory.filePath, targetId)
-            .then((result) => {
-              // Vault watcher will pick up the unlink, but force a manual
-              // remove so list_memorys is consistent immediately.
-              send({ id, result });
+          const ctxRaw = (params as Record<string, unknown> | undefined)
+            ?.audit_context as Record<string, unknown> | undefined;
+          const ctx = AuditContext.parse(ctxRaw ?? { actor: "user" });
+          auditedSoftDelete({
+            vault,
+            auditLog,
+            vaultRoot: VAULT_PATH!,
+            memoryID: targetId,
+            context: ctx,
+          })
+            .then(({ id: deletedId, trashPath, audit }) => {
+              send({
+                id,
+                result: {
+                  id: deletedId,
+                  file_path: trashPath,
+                  deleted: true,
+                  audit_id: audit.id,
+                },
+              });
             })
             .catch((err: Error) => {
               send({ id, error: { message: err.message } });
             });
+          return;
+        }
+        case "restore_memory": {
+          const targetId = String(params?.id ?? "").trim();
+          if (!targetId) throw new Error("id is required");
+          const ctxRaw = (params as Record<string, unknown> | undefined)
+            ?.audit_context as Record<string, unknown> | undefined;
+          const ctx = AuditContext.parse(ctxRaw ?? { actor: "user" });
+          const destOverride =
+            typeof (params as Record<string, unknown> | undefined)?.dest_file_path
+              === "string"
+              ? ((params as Record<string, unknown>).dest_file_path as string)
+              : undefined;
+          auditedRestore({
+            auditLog,
+            vaultRoot: VAULT_PATH!,
+            memoryID: targetId,
+            destFilePath: destOverride,
+            context: ctx,
+          })
+            .then(async ({ id: restoredId, restoredTo, audit }) => {
+              // Restore = neuer File-Add für den Vault — explicit reindex.
+              await vault.reindexFile(restoredTo);
+              send({
+                id,
+                result: {
+                  id: restoredId,
+                  file_path: restoredTo,
+                  audit_id: audit.id,
+                },
+              });
+            })
+            .catch((err: Error) => {
+              send({ id, error: { message: err.message } });
+            });
+          return;
+        }
+        case "audit_history": {
+          const memoryID = String(params?.memory_id ?? "").trim();
+          if (!memoryID) throw new Error("memory_id is required");
+          auditLog.forMemory(memoryID)
+            .then((entries) => send({ id, result: entries }))
+            .catch((err: Error) => send({
+              id,
+              error: { message: err.message },
+            }));
+          return;
+        }
+        case "audit_recent": {
+          const sinceISO = String(params?.since ?? "");
+          if (!sinceISO) throw new Error("since (ISO timestamp) is required");
+          const filterActor = params?.actor as string | undefined;
+          const filterOp = params?.operation as string | undefined;
+          auditLog
+            .since(sinceISO, {
+              actor: filterActor as never,
+              operation: filterOp as never,
+            })
+            .then((entries) => send({ id, result: entries }))
+            .catch((err: Error) => send({
+              id,
+              error: { message: err.message },
+            }));
           return;
         }
         default:

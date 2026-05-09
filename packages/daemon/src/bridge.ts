@@ -212,6 +212,17 @@ async function main(): Promise<void> {
             });
           return;
         }
+        case "reindex_file": {
+          // Cloud-Storage chokidar-Watcher kann mehrere Sekunden lagged
+          // sein. Mac-App ruft das nach direktem Sidecar-Write um sofortige
+          // Recall-Konsistenz zu erzwingen (Document-Hub Phase 1.4).
+          const filePath = String(params?.file_path ?? "").trim();
+          if (!filePath) throw new Error("file_path is required");
+          vault.reindexFile(filePath)
+            .then(() => send({ id, result: { reindexed: true, file_path: filePath } }))
+            .catch((err: Error) => send({ id, error: { message: err.message } }));
+          return;
+        }
         case "audit_history": {
           const memoryID = String(params?.memory_id ?? "").trim();
           if (!memoryID) throw new Error("memory_id is required");

@@ -65,6 +65,13 @@ export const FrontmatterSchema = z.object({
   og_image: z.string().optional(),
   saved_at: z.string().optional(),
   source_app: z.string().optional(),
+  // Document-only fields (only present when type === "doc"). Sidecar trägt
+  // diese, damit find_document/read_document das Original-File wiederfinden,
+  // auch wenn es außerhalb des Vaults liegt (linked_file === true).
+  original_path: z.string().optional(),
+  linked_file: z.boolean().optional(),
+  document_category: z.string().optional(),
+  folder_path: z.string().optional(),
 });
 export type Frontmatter = z.infer<typeof FrontmatterSchema>;
 

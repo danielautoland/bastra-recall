@@ -20,6 +20,28 @@ import { z } from "zod";
 import { Vault, SearchIndex, saveMemory, SaveMemoryInput } from "@nexus-recall/core";
 import { Telemetry, fireAndForget } from "./telemetry.js";
 import { startHttpServer } from "./http.js";
+import {
+  documentTools,
+  FindDocumentArgs,
+  ReadDocumentArgs,
+  OpenDocumentArgs,
+  findDocument,
+  readDocument,
+  openDocument,
+} from "./documents-handler.js";
+import {
+  documentWriteTools,
+  SaveDocumentArgs,
+  RecategorizeDocumentArgs,
+  MoveDocumentArgs,
+  saveDocument,
+  recategorizeDocument,
+  moveDocument,
+} from "./documents-write-handler.js";
+
+// Triage Issue #24: Write-Tools sind Pro-Feature. Aktuelles Gate ist ein
+// env-Flag — wenn ein Pro-License-Service kommt, ersetzt der das hier.
+const DOCUMENT_WRITE_ENABLED = process.env.NEXUS_DOCUMENT_WRITE === "1";
 
 const DAEMON_VERSION = "0.1.0";
 const DEFAULT_HTTP_PORT = 6723;
@@ -307,6 +329,8 @@ async function main(): Promise<void> {
           ],
         },
       },
+      ...documentTools,
+      ...(DOCUMENT_WRITE_ENABLED ? documentWriteTools : []),
     ],
   }));
 
@@ -419,6 +443,78 @@ async function main(): Promise<void> {
               text: JSON.stringify(result, null, 2),
             },
           ],
+        };
+      } catch (err) {
+        return errorResult((err as Error).message);
+      }
+    }
+
+    if (name === "find_document") {
+      const parsed = FindDocumentArgs.safeParse(args);
+      if (!parsed.success) return errorResult(parsed.error.message);
+      const result = findDocument(search, parsed.data);
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(result, null, 2) },
+        ],
+      };
+    }
+
+    if (name === "read_document") {
+      const parsed = ReadDocumentArgs.safeParse(args);
+      if (!parsed.success) return errorResult(parsed.error.message);
+      const doc = readDocument(vault, parsed.data);
+      if (!doc) return errorResult(`document not found: ${parsed.data.id}`);
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(doc, null, 2) },
+        ],
+      };
+    }
+
+    if (name === "open_document") {
+      const parsed = OpenDocumentArgs.safeParse(args);
+      if (!parsed.success) return errorResult(parsed.error.message);
+      const result = openDocument(vault, parsed.data);
+      if ("ok" in result && !result.ok) {
+        return errorResult(result.message);
+      }
+      return {
+        content: [
+          { type: "text", text: JSON.stringify(result, null, 2) },
+        ],
+      };
+    }
+
+    if (name === "save_document" || name === "recategorize_document" || name === "move_document") {
+      if (!DOCUMENT_WRITE_ENABLED) {
+        return errorResult(
+          `${name} is a Pro feature — set NEXUS_DOCUMENT_WRITE=1 to enable.`,
+        );
+      }
+      try {
+        if (name === "save_document") {
+          const parsed = SaveDocumentArgs.safeParse(args);
+          if (!parsed.success) return errorResult(parsed.error.message);
+          const result = await saveDocument(vault, parsed.data);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+        if (name === "recategorize_document") {
+          const parsed = RecategorizeDocumentArgs.safeParse(args);
+          if (!parsed.success) return errorResult(parsed.error.message);
+          const result = await recategorizeDocument(vault, parsed.data);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          };
+        }
+        // move_document
+        const parsed = MoveDocumentArgs.safeParse(args);
+        if (!parsed.success) return errorResult(parsed.error.message);
+        const result = await moveDocument(vault, parsed.data);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
       } catch (err) {
         return errorResult((err as Error).message);

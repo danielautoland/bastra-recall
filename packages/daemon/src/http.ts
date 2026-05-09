@@ -56,7 +56,7 @@ export async function startHttpServer(opts: HttpOptions): Promise<HttpHandle> {
 
     if (method === "POST" && url === "/hook/recall") {
       readJsonBody(req, MAX_BODY_BYTES)
-        .then((body) => {
+        .then(async (body) => {
           const query = typeof body.query === "string" ? body.query.trim() : "";
           if (!query) {
             sendJson(res, 400, { error: "query is required" });
@@ -67,7 +67,9 @@ export async function startHttpServer(opts: HttpOptions): Promise<HttpHandle> {
           const type = typeof body.type === "string" ? body.type : undefined;
 
           const tRecall0 = Date.now();
-          const hits = search.recall(query, { k, scope, type });
+          const hits = search.hasEmbeddings()
+            ? await search.recallHybrid(query, { k, scope, type })
+            : search.recall(query, { k, scope, type });
           const recallLatencyMs = Date.now() - tRecall0;
           const totalLatencyMs = Date.now() - t0;
           const recallId = telemetry.newRecallId();

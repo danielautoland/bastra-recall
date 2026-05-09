@@ -17,7 +17,15 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { Vault, SearchIndex, saveMemory, SaveMemoryInput } from "@nexus-recall/core";
+import {
+  Vault,
+  SearchIndex,
+  EmbeddingIndex,
+  OpenAIEmbeddingProvider,
+  saveMemory,
+  SaveMemoryInput,
+} from "@nexus-recall/core";
+import * as path from "node:path";
 import { Telemetry, fireAndForget } from "./telemetry.js";
 import { startHttpServer } from "./http.js";
 import {
@@ -80,6 +88,30 @@ async function main(): Promise<void> {
 
   const search = new SearchIndex(vault);
   search.start();
+
+  // Optional: Hybrid-Recall mit OpenAI-Embeddings, wenn API-Key da ist.
+  const embeddingApiKey =
+    process.env.OPENAI_API_KEY ?? process.env.BASTRA_EMBEDDING_KEY;
+  if (embeddingApiKey) {
+    const provider = new OpenAIEmbeddingProvider({ apiKey: embeddingApiKey });
+    const persistPath = path.join(VAULT_PATH!, ".bastra", "embeddings.json");
+    const embIdx = new EmbeddingIndex(vault, provider, persistPath);
+    embIdx
+      .start()
+      .then(() => {
+        search.useEmbeddings(embIdx);
+        console.error(
+          `[nexus-recall] embeddings ready (${embIdx.size()} vectors, ${embIdx.pendingSize()} pending)`,
+        );
+      })
+      .catch((err) => {
+        console.error(`[nexus-recall] embeddings start error: ${err}`);
+      });
+  } else {
+    console.error(
+      "[nexus-recall] embeddings disabled (no OPENAI_API_KEY / BASTRA_EMBEDDING_KEY)",
+    );
+  }
 
   const telemetry = new Telemetry();
   if (telemetry.isEnabled()) {
@@ -341,11 +373,14 @@ async function main(): Promise<void> {
       const parsed = RecallArgs.safeParse(args);
       if (!parsed.success) return errorResult(parsed.error.message);
       const t0 = Date.now();
-      const hits = search.recall(parsed.data.query, {
+      const recallOpts = {
         k: parsed.data.k,
         scope: parsed.data.scope,
         type: parsed.data.type,
-      });
+      };
+      const hits = search.hasEmbeddings()
+        ? await search.recallHybrid(parsed.data.query, recallOpts)
+        : search.recall(parsed.data.query, recallOpts);
       const latencyMs = Date.now() - t0;
       const recallId = telemetry.newRecallId();
       fireAndForget(

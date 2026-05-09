@@ -1,6 +1,8 @@
 import MiniSearch from "minisearch";
 import type { Memory } from "./schema.js";
 import type { Vault, VaultEvent } from "./vault.js";
+import type { EmbeddingIndex } from "./embeddings.js";
+import { fuseRRF } from "./embeddings.js";
 
 export interface RecallHit {
   id: string;
@@ -11,6 +13,8 @@ export interface RecallHit {
   topic_path: string[];
   score: number;
   matched_terms: string[];
+  /** „bm25" | „vector" | „hybrid" — primärer Treffer-Modus für Telemetrie. */
+  mode?: "bm25" | "vector" | "hybrid";
 }
 
 export interface RecallOptions {
@@ -43,6 +47,7 @@ interface IndexDoc {
 export class SearchIndex {
   private mini: MiniSearch<IndexDoc>;
   private detach?: () => void;
+  private embeddings?: EmbeddingIndex;
 
   constructor(private readonly vault: Vault) {
     this.mini = new MiniSearch<IndexDoc>({
@@ -92,6 +97,16 @@ export class SearchIndex {
     this.detach = undefined;
   }
 
+  /** Optionalen Embedding-Index registrieren — recallHybrid nutzt ihn,
+   *  recall (sync) bleibt BM25-only für Backwards-Compat. */
+  useEmbeddings(idx: EmbeddingIndex | undefined): void {
+    this.embeddings = idx;
+  }
+
+  hasEmbeddings(): boolean {
+    return this.embeddings !== undefined;
+  }
+
   recall(query: string, opts: RecallOptions = {}): RecallHit[] {
     const k = opts.k ?? 5;
     if (!query.trim()) return [];
@@ -114,7 +129,74 @@ export class SearchIndex {
       topic_path: r.topic_path as string[],
       score: round(r.score),
       matched_terms: r.terms ?? [],
+      mode: "bm25" as const,
     }));
+  }
+
+  /** Hybrid-Recall: BM25 + Vector via Reciprocal-Rank-Fusion. Wenn kein
+   *  EmbeddingIndex registriert ist, fällt auf reines BM25 (sync) zurück.
+   *  Der finale Score ist auf 0–1000 skaliert (RRF * 1000) damit das
+   *  Hook-Score-Threshold (≥100 = REQUIRED) sinnvoll greift. */
+  async recallHybrid(query: string, opts: RecallOptions = {}): Promise<RecallHit[]> {
+    if (!this.embeddings) return this.recall(query, opts);
+    const k = opts.k ?? 5;
+    if (!query.trim()) return [];
+
+    // BM25 — top 50 für RRF-Pool.
+    const bm25 = this.mini.search(query).filter((r) => {
+      if (r.obsolete) return false;
+      if (opts.scope && r.scope !== opts.scope) return false;
+      if (opts.type && r.type !== opts.type) return false;
+      return true;
+    });
+    const bm25Top = bm25.slice(0, 50);
+
+    // Vector — top 50 für RRF-Pool, plus type/scope-Filter über vault.
+    const vec = await this.embeddings.search(query, 100);
+    const vectorTop = vec
+      .map((h) => ({ hit: h, mem: this.vault.get(h.id) }))
+      .filter(({ mem }) => {
+        if (!mem) return false;
+        if (mem.fm.obsolete === true) return false;
+        if (opts.scope && mem.fm.scope !== opts.scope) return false;
+        if (opts.type && mem.fm.type !== opts.type) return false;
+        return true;
+      })
+      .slice(0, 50);
+
+    const bm25Ids = bm25Top.map((r) => r.id as string);
+    const vectorIds = vectorTop.map(({ hit }) => hit.id);
+    const fused = fuseRRF(bm25Ids, vectorIds);
+
+    // Lookup-Maps für die finale Hit-Konstruktion.
+    const bm25Lookup = new Map(bm25Top.map((r) => [r.id as string, r]));
+    const vectorLookup = new Map(vectorTop.map((v) => [v.hit.id, v]));
+
+    const sorted = Array.from(fused.entries()).sort((a, b) => b[1] - a[1]);
+    const out: RecallHit[] = [];
+    for (const [id, fusedScore] of sorted) {
+      if (out.length >= k) break;
+      const bm = bm25Lookup.get(id);
+      const v = vectorLookup.get(id);
+      const mem = v?.mem ?? this.vault.get(id);
+      if (!mem) continue;
+      const fm = mem.fm;
+      const inBoth = bm !== undefined && v !== undefined;
+      out.push({
+        id: fm.id,
+        title: fm.title,
+        type: fm.type,
+        scope: fm.scope,
+        summary: fm.summary,
+        topic_path: fm.topic_path,
+        // RRF-Score skaliert auf BM25-vergleichbare Range. Klassisch sind
+        // BM25-Scores ~5–500, RRF ist 0.005–0.04 → *5000 mappt grob.
+        score: round(fusedScore * 5000),
+        matched_terms: bm?.terms ?? [],
+        mode: inBoth ? "hybrid" : bm ? "bm25" : "vector",
+      });
+    }
+    return out;
   }
 
   loadFull(id: string): Memory | undefined {

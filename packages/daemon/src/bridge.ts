@@ -23,6 +23,8 @@
 import {
   Vault,
   SearchIndex,
+  EmbeddingIndex,
+  OpenAIEmbeddingProvider,
   SaveMemoryInput,
   AuditLog,
   AuditContext,
@@ -31,6 +33,28 @@ import {
   auditedRestore,
 } from "@nexus-recall/core";
 import readline from "node:readline";
+import * as path from "node:path";
+
+/** Optional: aktiviert OpenAI-Embeddings wenn OPENAI_API_KEY (oder
+ *  BASTRA_EMBEDDING_KEY) gesetzt ist. SearchIndex switcht dann auf
+ *  Hybrid-Recall (BM25 + Vector via RRF). */
+async function attachEmbeddings(search: SearchIndex, vault: Vault): Promise<void> {
+  const apiKey = process.env.OPENAI_API_KEY ?? process.env.BASTRA_EMBEDDING_KEY;
+  if (!apiKey) {
+    process.stderr.write(
+      "[bridge] embeddings disabled (no OPENAI_API_KEY / BASTRA_EMBEDDING_KEY)\n",
+    );
+    return;
+  }
+  const provider = new OpenAIEmbeddingProvider({ apiKey });
+  const persistPath = path.join(VAULT_PATH!, ".bastra", "embeddings.json");
+  const idx = new EmbeddingIndex(vault, provider, persistPath);
+  await idx.start();
+  search.useEmbeddings(idx);
+  process.stderr.write(
+    `[bridge] embeddings ready (${idx.size()} vectors, ${idx.pendingSize()} pending)\n`,
+  );
+}
 
 const VAULT_PATH = process.env.NEXUS_VAULT_PATH;
 if (!VAULT_PATH) {
@@ -61,6 +85,13 @@ async function main(): Promise<void> {
   search.start();
   const auditLog = new AuditLog(VAULT_PATH!);
 
+  // Optional: Embedding-Index für semantische Recall-Suche. Bei vorhandenem
+  // OPENAI_API_KEY wird OpenAI text-embedding-3-small aktiviert und mit
+  // BM25 via RRF gefused. Sonst bleibt Recall reines BM25.
+  attachEmbeddings(search, vault).catch((err) => {
+    process.stderr.write(`[bridge] embeddings attach error: ${err}\n`);
+  });
+
   // Push-Channel: jedes Vault-Event geht als unsolicited Notification an die
   // App, damit die UI live aktualisiert ohne pollen zu müssen. Notifications
   // haben kein `id`-Feld — die App unterscheidet so von Responses.
@@ -90,13 +121,24 @@ async function main(): Promise<void> {
         case "vault_status":
           result = { size: vault.size() };
           break;
-        case "recall":
-          result = search.recall(String(params?.query ?? ""), {
+        case "recall": {
+          // Hybrid (BM25 + Vector via RRF) wenn EmbeddingIndex registriert,
+          // sonst plain BM25 (sync).
+          const opts = {
             k: params?.k as number | undefined,
             scope: params?.scope as string | undefined,
             type: params?.type as string | undefined,
-          });
+          };
+          if (search.hasEmbeddings()) {
+            search
+              .recallHybrid(String(params?.query ?? ""), opts)
+              .then((hits) => send({ id, result: hits }))
+              .catch((err: Error) => send({ id, error: { message: err.message } }));
+            return;
+          }
+          result = search.recall(String(params?.query ?? ""), opts);
           break;
+        }
         case "list_memorys": {
           const wantType = params?.type as string | undefined;
           const wantScope = params?.scope as string | undefined;

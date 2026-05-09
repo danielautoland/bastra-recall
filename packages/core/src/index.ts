@@ -40,3 +40,10 @@ export {
   auditedSoftDelete,
   auditedRestore,
 } from "./audit-save.js";
+
+export {
+  EmbeddingIndex,
+  OpenAIEmbeddingProvider,
+  fuseRRF,
+} from "./embeddings.js";
+export type { EmbeddingProvider, EmbeddingHit } from "./embeddings.js";

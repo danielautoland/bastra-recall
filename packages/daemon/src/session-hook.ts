@@ -27,8 +27,9 @@ import { randomUUID } from "node:crypto";
 
 const HOOK_TIMEOUT_MS = parseInt(process.env.NEXUS_HOOK_TIMEOUT_MS ?? "500", 10);
 const DEFAULT_PORT = 6723;
-const HOOK_VERSION = "0.1.0";
+const HOOK_VERSION = "0.2.0";
 const SCORE_FLOOR = 30;
+const MUST_LOAD_SCORE = 100;
 const TOTAL_HINTS_CAP = 7;
 
 interface SessionPayload {
@@ -159,10 +160,30 @@ function formatBlock(hits: RecallHit[], project: string | null, source: string |
   const projAttr = project ? ` project="${escapeAttr(project)}"` : "";
   const srcAttr = source ? ` source="${escapeAttr(source)}"` : "";
   const head = `<session-context surface="claude-code"${projAttr}${srcAttr}>`;
-  const intro = `${hits.length} memor${hits.length === 1 ? "y" : "ys"} preloaded for this session — call load_memory(id) when relevant:`;
-  const lines = hits.map((h) => formatHintLine(h));
   const tail = `</session-context>`;
-  return [head, intro, ...lines, tail].join("\n");
+
+  const required = hits.filter((h) => h.score >= MUST_LOAD_SCORE);
+  const optional = hits.filter((h) => h.score < MUST_LOAD_SCORE);
+  const sections: string[] = [];
+
+  if (required.length > 0) {
+    sections.push(
+      `REQUIRED — load each of these via load_memory(id) before responding to the user. ` +
+        `Score ≥${MUST_LOAD_SCORE} means it's a strong match for ${project ?? "this"} session context. ` +
+        `Skipping is not allowed (per user-preference: agent must not ignore hook hints).`,
+    );
+    for (const h of required) sections.push(formatHintLine(h));
+  }
+
+  if (optional.length > 0) {
+    if (required.length > 0) sections.push("");
+    sections.push(
+      `OPTIONAL (score ${SCORE_FLOOR}–${MUST_LOAD_SCORE - 1}) — load only when the user prompt directly touches the topic:`,
+    );
+    for (const h of optional) sections.push(formatHintLine(h));
+  }
+
+  return [head, ...sections, tail].join("\n");
 }
 
 function formatHintLine(h: RecallHit): string {

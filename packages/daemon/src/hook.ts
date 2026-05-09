@@ -27,8 +27,9 @@ import { randomUUID } from "node:crypto";
 
 const HOOK_TIMEOUT_MS = parseInt(process.env.NEXUS_HOOK_TIMEOUT_MS ?? "250", 10);
 const DEFAULT_PORT = 6723;
-const HOOK_VERSION = "0.1.0";
+const HOOK_VERSION = "0.2.0";
 const SCORE_FLOOR = 30; // mirror SKILL.md: <30 is noise
+const MUST_LOAD_SCORE = 100; // hits at/above this are non-negotiable loads
 
 interface ClaudeHookPayload {
   session_id?: string;
@@ -112,24 +113,27 @@ async function main(): Promise<void> {
     }
   }
 
-  const hintLines: string[] = [];
+  const requiredHits: RecallHit[] = [];
+  const optionalHits: RecallHit[] = [];
   if (resp && Array.isArray(resp.hits)) {
     for (const h of resp.hits) {
       if (h.score < SCORE_FLOOR) continue;
-      hintLines.push(formatHintLine(h));
+      if (h.score >= MUST_LOAD_SCORE) requiredHits.push(h);
+      else optionalHits.push(h);
     }
   }
 
-  if (resp && hintLines.length === 0) status = "no-hits";
+  const totalHints = requiredHits.length + optionalHits.length;
+  if (resp && totalHints === 0) status = "no-hits";
 
   const totalMs = Date.now() - startedAt;
   const topScore = resp?.hits?.[0]?.score ?? null;
 
   // 4) Emit Claude-Code hookSpecificOutput first — that's the hot path.
-  if (hintLines.length === 0) {
+  if (totalHints === 0) {
     emitEmpty();
   } else {
-    const block = formatHintBlock(hintLines, project, hintLines.length);
+    const block = formatHintBlock(requiredHits, optionalHits, project);
     process.stdout.write(
       JSON.stringify({
         hookSpecificOutput: {
@@ -148,7 +152,8 @@ async function main(): Promise<void> {
     query_chars: topics.query.length,
     daemon_url: url,
     daemon_reachable: resp !== null,
-    hint_count: hintLines.length,
+    hint_count: totalHints,
+    required_count: requiredHits.length,
     top_score: topScore,
     latency_ms_total: totalMs,
     status,
@@ -166,12 +171,30 @@ function formatHintLine(h: RecallHit): string {
   return `- ${h.id} (${h.type}, score ${Math.round(h.score)}): ${summary}`;
 }
 
-function formatHintBlock(lines: string[], project: string | null, count: number): string {
+function formatHintBlock(required: RecallHit[], optional: RecallHit[], project: string | null): string {
   const projAttr = project ? ` project="${escapeAttr(project)}"` : "";
   const head = `<recall-hints surface="claude-code"${projAttr}>`;
-  const intro = `${count} memor${count === 1 ? "y" : "ys"} may be relevant — call load_memory(id) and apply before continuing if score is high or the topic is a direct match:`;
   const tail = `</recall-hints>`;
-  return [head, intro, ...lines, tail].join("\n");
+  const sections: string[] = [];
+
+  if (required.length > 0) {
+    sections.push(
+      `REQUIRED — call load_memory(id) for EACH of these BEFORE the pending tool call. ` +
+        `Score ≥${MUST_LOAD_SCORE} means the memory is a strong topic match for what you're about to do. ` +
+        `Skipping these is not allowed (per user-preference: agent must not ignore hook hints).`,
+    );
+    for (const h of required) sections.push(formatHintLine(h));
+  }
+
+  if (optional.length > 0) {
+    if (required.length > 0) sections.push("");
+    sections.push(
+      `OPTIONAL (score ${SCORE_FLOOR}–${MUST_LOAD_SCORE - 1}) — load only if the title/summary directly relates to the pending change:`,
+    );
+    for (const h of optional) sections.push(formatHintLine(h));
+  }
+
+  return [head, ...sections, tail].join("\n");
 }
 
 function escapeAttr(s: string): string {
@@ -257,6 +280,7 @@ interface HookCallTelemetry {
   daemon_url: string;
   daemon_reachable: boolean;
   hint_count: number;
+  required_count: number;
   top_score: number | null;
   latency_ms_total: number;
   status: "ok" | "no-hits" | "daemon-unreachable" | "timeout" | "error";

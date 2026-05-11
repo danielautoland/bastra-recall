@@ -47,6 +47,32 @@ export const FrontmatterSchema = z.object({
   scope: z.string().min(1),
   recall_when: z.array(z.string()).min(1),
   related: z.array(z.string()).default([]),
+  /**
+   * Memory-Graph (#30 / #49): LLM-erkannte Beziehungen zu anderen Memories.
+   * `id` ist die Ziel-Memory, `reason` ein kurzer Satz warum sie verbunden
+   * sind, `score` ist die LLM-Confidence (0..1). Wird vom Auto-Related-
+   * Detection-Background-Service in der Mac-App gefüllt, vom Multi-Hop-
+   * Recall in `search.recall(expand_hops:)` gelesen.
+   */
+  related_via: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        reason: z.string().min(1),
+        score: z.number().min(0).max(1),
+      }),
+    )
+    .default([]),
+  /**
+   * Sensitivity-Level (#58): steuert, welche Surfaces das Memory sehen.
+   * - `private`: nur Mac-App, NICHT für externe MCP-Clients.
+   * - `team` (default): lokale KI-Tools (Claude Code, Cursor) dürfen es sehen.
+   * - `public`: auch via Cross-Surface-Endpoints sichtbar.
+   * Daemon filtert in recall/find_document/load_memory/list_memorys auf
+   * `min_sensitivity` (default `team` für externe Caller, Mac-App ruft mit
+   * `private` als Override).
+   */
+  sensitivity: z.enum(["private", "team", "public"]).default("team"),
   source: z.string().optional(),
   confidence: z.number().min(0).max(1).default(1.0),
   created: dateString,

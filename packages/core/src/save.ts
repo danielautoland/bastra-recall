@@ -20,6 +20,26 @@ export const SaveMemoryInput = z.object({
   scope: z.string().min(1),
   recall_when: z.array(z.string().min(1)).min(1),
   related: z.array(z.string()).optional(),
+  /**
+   * Memory-Graph (#30 / #49): LLM-detektierte Beziehungen. Optional —
+   * normalerweise nicht beim manuellen save_memory gesetzt, sondern vom
+   * Auto-Related-Detection-Background-Service via reindex_file persistiert.
+   */
+  related_via: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        reason: z.string().min(1),
+        score: z.number().min(0).max(1),
+      }),
+    )
+    .optional(),
+  /**
+   * Sensitivity-Level (#58). Optional, default „team" wenn nicht gesetzt.
+   * Mac-App-UI macht den Per-Memory-Picker; Auto-Captures (Inbox-Watcher,
+   * Share-Sheet) erben den Default.
+   */
+  sensitivity: z.enum(["private", "team", "public"]).optional(),
   source: z.string().optional(),
   confidence: z.number().min(0).max(1).optional(),
   affects_files: z.array(z.string()).optional(),
@@ -135,6 +155,8 @@ export async function saveMemory(
     scope: input.scope,
     recall_when: input.recall_when,
     related: input.related ?? [],
+    related_via: input.related_via ?? [],
+    sensitivity: input.sensitivity ?? "team",
     ...(input.source ? { source: input.source } : {}),
     confidence: input.confidence ?? 1,
     created: today,

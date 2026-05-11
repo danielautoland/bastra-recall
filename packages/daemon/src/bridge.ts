@@ -168,11 +168,16 @@ async function main(): Promise<void> {
           break;
         case "recall": {
           // Hybrid (BM25 + Vector via RRF) wenn EmbeddingIndex registriert,
-          // sonst plain BM25 (sync).
+          // sonst plain BM25 (sync). Mac-App sieht IMMER den vollen Vault
+          // inkl. private-Memories → allow_private: true hardgecoded; der
+          // MCP-Server (index.ts) ist die richtige Stelle für externen
+          // Filter. expand_hops/scope/type sind optional vom Caller.
           const opts = {
             k: params?.k as number | undefined,
             scope: params?.scope as string | undefined,
             type: params?.type as string | undefined,
+            allow_private: true,
+            expand_hops: (params?.expand_hops === 1 ? 1 : 0) as 0 | 1,
           };
           if (search.hasEmbeddings()) {
             search

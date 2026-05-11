@@ -70,10 +70,26 @@ const RecallArgs = z.object({
   k: z.number().int().min(1).max(20).optional(),
   scope: z.string().optional(),
   type: z.string().optional(),
+  /**
+   * Sensitivity-Filter (#58). Default `false` — externe MCP-Caller (Claude
+   * Code, Cursor, …) sehen nie `sensitivity: private` Memories. Die Bastra-
+   * Mac-App ruft mit `allow_private: true` und sieht den vollen Vault.
+   */
+  allow_private: z.boolean().optional(),
+  /**
+   * Multi-Hop-Recall (#30 / #51). Default `0`. Bei `1` liefert der Server
+   * zusätzlich zu den direkten Treffern deren 1-Hop-Nachbarn (Memories,
+   * die per `related_via` verbunden sind), mit reduziertem Score und
+   * `hop: "1-hop"` im Result.
+   */
+  expand_hops: z.union([z.literal(0), z.literal(1)]).optional(),
 });
 
 const LoadMemoryArgs = z.object({
   id: z.string().min(1),
+  /** Spiegelt `RecallArgs.allow_private` — verhindert dass externe Clients
+   *  Private-Memories per ID-Enumeration laden. Default `false`. */
+  allow_private: z.boolean().optional(),
 });
 
 async function main(): Promise<void> {
@@ -374,6 +390,8 @@ async function main(): Promise<void> {
         k: parsed.data.k,
         scope: parsed.data.scope,
         type: parsed.data.type,
+        allow_private: parsed.data.allow_private ?? false,
+        expand_hops: parsed.data.expand_hops,
       };
       const hits = search.hasEmbeddings()
         ? await search.recallHybrid(parsed.data.query, recallOpts)
@@ -427,6 +445,16 @@ async function main(): Promise<void> {
         }),
       );
       if (!m) return errorResult(`memory not found: ${parsed.data.id}`);
+      // Sensitivity-Filter (#58): externe Caller sehen Private-Memories
+      // nicht — auch nicht über direkte ID-Lookups. Mac-App kann mit
+      // `allow_private: true` overriden.
+      const allowPrivate = parsed.data.allow_private ?? false;
+      if (
+        !allowPrivate &&
+        (m.fm as { sensitivity?: string }).sensitivity === "private"
+      ) {
+        return errorResult(`memory not found: ${parsed.data.id}`);
+      }
       return {
         content: [
           {

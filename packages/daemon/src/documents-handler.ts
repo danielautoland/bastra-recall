@@ -91,23 +91,33 @@ export const documentTools = [
 /**
  * Filtert Recall-Hits auf type=doc und liefert die Top-k. SearchIndex
  * versteht den `type`-Filter bereits — wir delegieren komplett dahin.
+ * Sensitivity (#58) wird über `allowPrivate` propagiert: externe MCP-Caller
+ * sehen nur `team`+`public` Documents, die Mac-App ruft mit `true`.
  */
 export function findDocument(
   search: SearchIndex,
   args: { query: string; k?: number },
+  opts: { allowPrivate?: boolean } = {},
 ): { query: string; hits: Array<unknown> } {
   const k = args.k ?? 3;
-  const hits = search.recall(args.query, { k, type: "doc" });
+  const hits = search.recall(args.query, {
+    k,
+    type: "doc",
+    allow_private: opts.allowPrivate ?? false,
+  });
   return { query: args.query, hits };
 }
 
 /**
  * Liefert das volle Sidecar inklusive Document-spezifischer Felder
  * (`original_path`, `document_category`, `folder_path`, `linked_file`).
+ * `allowPrivate=false` (default) blendet `sensitivity: private` Documents
+ * aus — verhindert Bypass des Sensitivity-Filters per direkter ID.
  */
 export function readDocument(
   vault: Vault,
   args: { id: string },
+  opts: { allowPrivate?: boolean } = {},
 ):
   | {
       id: string;
@@ -124,6 +134,12 @@ export function readDocument(
   | null {
   const m = vault.get(args.id);
   if (!m || m.fm.type !== "doc") return null;
+  if (
+    !opts.allowPrivate &&
+    (m.fm as { sensitivity?: string }).sensitivity === "private"
+  ) {
+    return null;
+  }
   const fm = m.fm as typeof m.fm & {
     original_path?: string;
     linked_file?: boolean;
@@ -151,11 +167,18 @@ export function readDocument(
 export function openDocument(
   vault: Vault,
   args: { id: string },
+  opts: { allowPrivate?: boolean } = {},
 ):
   | { ok: true; path: string }
   | { ok: false; path?: string; message: string } {
   const m = vault.get(args.id);
   if (!m || m.fm.type !== "doc") {
+    return { ok: false, message: `document not found: ${args.id}` };
+  }
+  if (
+    !opts.allowPrivate &&
+    (m.fm as { sensitivity?: string }).sensitivity === "private"
+  ) {
     return { ok: false, message: `document not found: ${args.id}` };
   }
   const fm = m.fm as typeof m.fm & { original_path?: string };

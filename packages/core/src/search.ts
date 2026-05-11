@@ -15,12 +15,28 @@ export interface RecallHit {
   matched_terms: string[];
   /** „bm25" | „vector" | „hybrid" — primärer Treffer-Modus für Telemetrie. */
   mode?: "bm25" | "vector" | "hybrid";
+  /** „direct" | „1-hop" — bei Multi-Hop-Recall: ob das Memory ein direkter
+   *  Match war oder ein Nachbar über `related_via`. UI kann das anders rendern. */
+  hop?: "direct" | "1-hop";
 }
 
 export interface RecallOptions {
   k?: number;
   scope?: string; // exact-match filter
   type?: string; // exact-match filter
+  /**
+   * Sensitivity-Filter (#58). Default `false` — externe MCP-Caller (Claude
+   * Code, Cursor, etc.) sehen keine als `private` markierten Memories. Die
+   * Mac-App ruft mit `allow_private: true` und sieht alles.
+   */
+  allow_private?: boolean;
+  /**
+   * Multi-Hop-Recall (#30 / #51). Default `0` — nur direkte BM25/Vector-Hits.
+   * Bei `1`: nach den direkten Treffern werden deren `related_via`-Nachbarn
+   * (1-Hop) eingehängt, mit reduziertem Score. UI kennzeichnet sie als
+   * `hop: "1-hop"`.
+   */
+  expand_hops?: 0 | 1;
 }
 
 interface IndexDoc {
@@ -37,6 +53,7 @@ interface IndexDoc {
   topic_path: string[];
   obsolete: boolean;
   confidence: number;
+  sensitivity: string;
 }
 
 /**
@@ -68,6 +85,7 @@ export class SearchIndex {
         "topic_path",
         "obsolete",
         "confidence",
+        "sensitivity",
       ],
       searchOptions: {
         boost: {
@@ -113,14 +131,11 @@ export class SearchIndex {
     const raw = this.mini.search(query);
 
     const filtered = raw.filter((r) => {
-      // hide obsolete by default
-      if (r.obsolete) return false;
-      if (opts.scope && r.scope !== opts.scope) return false;
-      if (opts.type && r.type !== opts.type) return false;
+      if (!passesRecallFilters(r, opts)) return false;
       return true;
     });
 
-    return filtered.slice(0, k).map((r) => ({
+    const direct: RecallHit[] = filtered.slice(0, k).map((r) => ({
       id: r.id as string,
       title: r.title as string,
       type: r.type as string,
@@ -130,7 +145,11 @@ export class SearchIndex {
       score: round(r.score),
       matched_terms: r.terms ?? [],
       mode: "bm25" as const,
+      hop: "direct" as const,
     }));
+
+    if (opts.expand_hops !== 1) return direct;
+    return this.appendOneHopNeighbors(direct, opts);
   }
 
   /** Hybrid-Recall: BM25 + Vector via Reciprocal-Rank-Fusion. Wenn kein
@@ -143,15 +162,10 @@ export class SearchIndex {
     if (!query.trim()) return [];
 
     // BM25 — top 50 für RRF-Pool.
-    const bm25 = this.mini.search(query).filter((r) => {
-      if (r.obsolete) return false;
-      if (opts.scope && r.scope !== opts.scope) return false;
-      if (opts.type && r.type !== opts.type) return false;
-      return true;
-    });
+    const bm25 = this.mini.search(query).filter((r) => passesRecallFilters(r, opts));
     const bm25Top = bm25.slice(0, 50);
 
-    // Vector — top 50 für RRF-Pool, plus type/scope-Filter über vault.
+    // Vector — top 50 für RRF-Pool, plus type/scope/sensitivity-Filter über vault.
     const vec = await this.embeddings.search(query, 100);
     const vectorTop = vec
       .map((h) => ({ hit: h, mem: this.vault.get(h.id) }))
@@ -160,6 +174,12 @@ export class SearchIndex {
         if (mem.fm.obsolete === true) return false;
         if (opts.scope && mem.fm.scope !== opts.scope) return false;
         if (opts.type && mem.fm.type !== opts.type) return false;
+        if (
+          !opts.allow_private &&
+          (mem.fm as { sensitivity?: string }).sensitivity === "private"
+        ) {
+          return false;
+        }
         return true;
       })
       .slice(0, 50);
@@ -194,9 +214,62 @@ export class SearchIndex {
         score: round(fusedScore * 5000),
         matched_terms: bm?.terms ?? [],
         mode: inBoth ? "hybrid" : bm ? "bm25" : "vector",
+        hop: "direct" as const,
       });
     }
-    return out;
+    if (opts.expand_hops !== 1) return out;
+    return this.appendOneHopNeighbors(out, opts);
+  }
+
+  /**
+   * Multi-Hop-Expansion (#30 / #51): nimmt die direkten Hits, sammelt deren
+   * `related_via.id`-Nachbarn, filtert sie (obsolete / sensitivity / dedup
+   * gegen direct), und hängt sie mit reduziertem Score an. Score-Reduktion:
+   * `base_score * 0.5` (heuristisch — Nachbarn sollen nie über direkte
+   * Treffer ranken).
+   */
+  private appendOneHopNeighbors(direct: RecallHit[], opts: RecallOptions): RecallHit[] {
+    if (direct.length === 0) return direct;
+    const seen = new Set(direct.map((h) => h.id));
+    const neighbors: RecallHit[] = [];
+    for (const hit of direct) {
+      const mem = this.vault.get(hit.id);
+      const related = (mem?.fm as { related_via?: { id: string; reason: string; score: number }[] })
+        ?.related_via;
+      if (!related?.length) continue;
+      for (const link of related) {
+        if (seen.has(link.id)) continue;
+        const neigh = this.vault.get(link.id);
+        if (!neigh) continue;
+        if (neigh.fm.obsolete === true) continue;
+        if (opts.scope && neigh.fm.scope !== opts.scope) continue;
+        if (opts.type && neigh.fm.type !== opts.type) continue;
+        if (
+          !opts.allow_private &&
+          (neigh.fm as { sensitivity?: string }).sensitivity === "private"
+        ) {
+          continue;
+        }
+        seen.add(link.id);
+        neighbors.push({
+          id: neigh.fm.id,
+          title: neigh.fm.title,
+          type: neigh.fm.type,
+          scope: neigh.fm.scope,
+          summary: neigh.fm.summary,
+          topic_path: neigh.fm.topic_path,
+          // Neighbor-Score gedeckelt unter dem Originalhit, gewichtet mit
+          // der gespeicherten Beziehungs-Confidence.
+          score: round(hit.score * 0.5 * link.score),
+          matched_terms: [],
+          mode: hit.mode,
+          hop: "1-hop" as const,
+        });
+      }
+    }
+    // Stable: direct zuerst, neighbors nach Score sortiert dahinter.
+    neighbors.sort((a, b) => b.score - a.score);
+    return [...direct, ...neighbors];
   }
 
   loadFull(id: string): Memory | undefined {
@@ -243,9 +316,32 @@ export class SearchIndex {
       topic_path: fm.topic_path,
       obsolete: fm.obsolete === true,
       confidence: fm.confidence ?? 1,
+      // Default ist "team" (kommt aus dem zod-Schema), aber alte Files
+      // ohne das Feld werden hier zu "team" defaultet damit der Filter
+      // konsistent ist.
+      sensitivity: (fm as { sensitivity?: string }).sensitivity ?? "team",
     };
     this.mini.add(doc);
   }
+}
+
+/**
+ * Standard-Filter für BM25-Roh-Treffer: obsolete-Maskierung, scope/type-
+ * Exact-Match, und der neue Sensitivity-Filter (#58). Wird sowohl von
+ * `recall` als auch von `recallHybrid` aufgerufen, damit der Filter an
+ * einer Stelle gepflegt wird. `r` ist ein MiniSearch-`SearchResult`, das
+ * via `storeFields` die gespeicherten Doc-Properties als beliebige
+ * Keys mit-trägt — daher das `Record<string, unknown>`-Typing hier.
+ */
+function passesRecallFilters(
+  r: Record<string, unknown>,
+  opts: RecallOptions,
+): boolean {
+  if (r.obsolete) return false;
+  if (opts.scope && r.scope !== opts.scope) return false;
+  if (opts.type && r.type !== opts.type) return false;
+  if (!opts.allow_private && r.sensitivity === "private") return false;
+  return true;
 }
 
 function round(n: number): number {

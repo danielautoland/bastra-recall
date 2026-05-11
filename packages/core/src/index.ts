@@ -44,6 +44,7 @@ export {
 export {
   EmbeddingIndex,
   OpenAIEmbeddingProvider,
+  OllamaEmbeddingProvider,
   fuseRRF,
 } from "./embeddings.js";
 export type { EmbeddingProvider, EmbeddingHit } from "./embeddings.js";

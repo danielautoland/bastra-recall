@@ -22,8 +22,10 @@ import {
   SearchIndex,
   EmbeddingIndex,
   OpenAIEmbeddingProvider,
+  OllamaEmbeddingProvider,
   saveMemory,
   SaveMemoryInput,
+  type EmbeddingProvider,
 } from "@nexus-recall/core";
 import * as path from "node:path";
 import { Telemetry, fireAndForget } from "./telemetry.js";
@@ -89,11 +91,10 @@ async function main(): Promise<void> {
   const search = new SearchIndex(vault);
   search.start();
 
-  // Optional: Hybrid-Recall mit OpenAI-Embeddings, wenn API-Key da ist.
-  const embeddingApiKey =
-    process.env.OPENAI_API_KEY ?? process.env.BASTRA_EMBEDDING_KEY;
-  if (embeddingApiKey) {
-    const provider = new OpenAIEmbeddingProvider({ apiKey: embeddingApiKey });
+  // Hybrid-Recall: Provider via BASTRA_EMBEDDING_PROVIDER (ollama|openai|none).
+  // Backwards-compat: ohne expliziten Provider, aber mit OPENAI_API_KEY → openai.
+  const provider = pickEmbeddingProvider();
+  if (provider) {
     const persistPath = path.join(VAULT_PATH!, ".bastra", "embeddings.json");
     const embIdx = new EmbeddingIndex(vault, provider, persistPath);
     embIdx
@@ -101,16 +102,12 @@ async function main(): Promise<void> {
       .then(() => {
         search.useEmbeddings(embIdx);
         console.error(
-          `[nexus-recall] embeddings ready (${embIdx.size()} vectors, ${embIdx.pendingSize()} pending)`,
+          `[nexus-recall] embeddings ready provider=${provider.id} (${embIdx.size()} vectors, ${embIdx.pendingSize()} pending)`,
         );
       })
       .catch((err) => {
         console.error(`[nexus-recall] embeddings start error: ${err}`);
       });
-  } else {
-    console.error(
-      "[nexus-recall] embeddings disabled (no OPENAI_API_KEY / BASTRA_EMBEDDING_KEY)",
-    );
   }
 
   const telemetry = new Telemetry();
@@ -581,6 +578,46 @@ function errorResult(msg: string) {
     isError: true,
     content: [{ type: "text" as const, text: msg }],
   };
+}
+
+/**
+ * Wählt den Embedding-Provider basierend auf BASTRA_EMBEDDING_PROVIDER:
+ *   ollama  → lokale Ollama-Instanz (BASTRA_OLLAMA_URL, BASTRA_EMBEDDING_MODEL)
+ *   openai  → OpenAI Cloud (OPENAI_API_KEY oder BASTRA_EMBEDDING_KEY)
+ *   none/—  → Embeddings disabled (Recall fällt auf reines BM25 zurück)
+ * Backwards-compat: wenn Provider nicht gesetzt aber API-Key da → openai.
+ */
+function pickEmbeddingProvider(): EmbeddingProvider | null {
+  const requested = (process.env.BASTRA_EMBEDDING_PROVIDER ?? "").toLowerCase();
+  const apiKey = process.env.OPENAI_API_KEY ?? process.env.BASTRA_EMBEDDING_KEY;
+
+  if (requested === "none") {
+    console.error("[nexus-recall] embeddings disabled (provider=none)");
+    return null;
+  }
+  if (requested === "ollama") {
+    const baseURL = process.env.BASTRA_OLLAMA_URL ?? "http://localhost:11434";
+    const model = process.env.BASTRA_EMBEDDING_MODEL ?? "embeddinggemma";
+    const dimEnv = process.env.BASTRA_EMBEDDING_DIM;
+    const dim = dimEnv ? Number.parseInt(dimEnv, 10) : undefined;
+    return new OllamaEmbeddingProvider({ baseURL, model, dim });
+  }
+  if (requested === "openai") {
+    if (!apiKey) {
+      console.error(
+        "[nexus-recall] embeddings disabled (provider=openai but no API key)",
+      );
+      return null;
+    }
+    return new OpenAIEmbeddingProvider({ apiKey });
+  }
+  if (apiKey) {
+    return new OpenAIEmbeddingProvider({ apiKey });
+  }
+  console.error(
+    "[nexus-recall] embeddings disabled (no BASTRA_EMBEDDING_PROVIDER, no API key)",
+  );
+  return null;
 }
 
 main().catch((err) => {

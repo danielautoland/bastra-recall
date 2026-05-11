@@ -72,6 +72,25 @@ export const FrontmatterSchema = z.object({
   linked_file: z.boolean().optional(),
   document_category: z.string().optional(),
   folder_path: z.string().optional(),
+  // Auto-Inbox: Files vom Inbox-Watcher werden ohne User-Sheet eingelesen
+  // und als "ungeprüft" markiert. Mac-App rendert Pill + Tint, bietet
+  // Bulk-Review-Sheet bei ≥2 needs_review im aktuellen Folder.
+  needs_review: z.boolean().optional(),
+  // Auto-Inbox: KI-Vorschlag für den Zielordner. Wird beim Auto-Commit
+  // gespeichert, während das File physisch in Inbox/ landet. Review-Sheet
+  // zeigt's und verwendet es als Default beim Folder-Picker.
+  ai_suggested_folder: z.string().optional(),
+  // Geo-Koordinaten + Reverse-Geocoding-Resultat. Mac-App schreibt EXIF-GPS
+  // (Bilder) oder NSDataDetector-Adresse (Verträge/Rechnungen) hier rein,
+  // Map-View rendert die Pins. Optional — Default für Docs ohne Location.
+  location: z
+    .object({
+      lat: z.number(),
+      lon: z.number(),
+      place: z.string().optional(),
+      source: z.enum(["exif", "ocr", "manual"]).optional(),
+    })
+    .optional(),
 });
 export type Frontmatter = z.infer<typeof FrontmatterSchema>;
 

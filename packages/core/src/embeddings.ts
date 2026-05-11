@@ -75,6 +75,75 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
+// ─── Ollama Provider ─────────────────────────────────────────────
+
+/**
+ * Lokales Embedding-Provider via Ollama (https://ollama.com).
+ *
+ * Vorteile ggü. OpenAI:
+ * - Keine Token-Kosten / kein Quota
+ * - Daten bleiben on-device (privatsphäre, GDPR)
+ * - Kein Network-Roundtrip → schneller bei vielen kleinen Batches
+ *
+ * Setup:
+ *   brew install ollama
+ *   ollama pull embeddinggemma   # ~200 MB, multilingual, 768 dim
+ *
+ * Ollama serviert OpenAI-kompatibles `/v1/embeddings`-Endpoint, daher
+ * fast identische Wire-Logik zu OpenAIEmbeddingProvider — nur URL und
+ * Auth-Header weg.
+ *
+ * Default-Modell: `embeddinggemma` (Google, 308M Params, multilingual,
+ * MTEB-Best <500M). Daniels deutscher Vault profitiert vom multilingual-
+ * Training. Alternativen: `nomic-embed-text` (288M, EN-fokussiert),
+ * `bge-m3` (~2.3GB, 100+ Sprachen, schwerer aber robuster).
+ */
+export class OllamaEmbeddingProvider implements EmbeddingProvider {
+  readonly id: string;
+  readonly dim: number;
+  private baseURL: string;
+  private model: string;
+
+  constructor(opts: {
+    baseURL?: string;
+    model?: string;
+    dim?: number;
+  }) {
+    this.baseURL = opts.baseURL ?? "http://localhost:11434";
+    this.model = opts.model ?? "embeddinggemma";
+    // EmbeddingGemma default 768, andere Modelle abweichend — via opts
+    // override-bar. Bei Mismatch wird der Index automatisch invalidiert
+    // (siehe load(): dim/provider-Check).
+    this.dim = opts.dim ?? 768;
+    this.id = `ollama-${this.model}`;
+  }
+
+  async embed(texts: string[]): Promise<Float32Array[]> {
+    if (texts.length === 0) return [];
+    const url = this.baseURL.replace(/\/+$/, "") + "/v1/embeddings";
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: this.model,
+        input: texts,
+        encoding_format: "float",
+      }),
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "<binary>");
+      throw new Error(
+        `Ollama embed HTTP ${resp.status} (${url}): ${body.slice(0, 200)}`,
+      );
+    }
+    const json = (await resp.json()) as {
+      data: Array<{ embedding: number[]; index: number }>;
+    };
+    const sorted = [...json.data].sort((a, b) => a.index - b.index);
+    return sorted.map((d) => new Float32Array(d.embedding));
+  }
+}
+
 // ─── Embedding Hit ───────────────────────────────────────────────
 
 export interface EmbeddingHit {
@@ -106,7 +175,7 @@ export class EmbeddingIndex {
       if (!this.vectors.has(m.fm.id)) this.pendingQueue.add(m.fm.id);
     }
     if (this.pendingQueue.size > 0) {
-      console.log(
+      console.error(
         `[bastra.embeddings] backfilling ${this.pendingQueue.size} memories…`,
       );
       void this.flushQueue();
@@ -163,7 +232,7 @@ export class EmbeddingIndex {
         vectors: Record<string, string>;
       };
       if (data.dim !== this.provider.dim || data.provider !== this.provider.id) {
-        console.log(
+        console.error(
           `[bastra.embeddings] provider/dim changed (was ${data.provider}/${data.dim}, now ${this.provider.id}/${this.provider.dim}) — reindexing all`,
         );
         return;
@@ -175,7 +244,7 @@ export class EmbeddingIndex {
         );
         this.vectors.set(id, f32);
       }
-      console.log(`[bastra.embeddings] loaded ${this.vectors.size} vectors`);
+      console.error(`[bastra.embeddings] loaded ${this.vectors.size} vectors`);
     } catch (err) {
       // file existiert nicht oder defekt — start fresh
       const code = (err as NodeJS.ErrnoException).code;

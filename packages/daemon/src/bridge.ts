@@ -25,6 +25,8 @@ import {
   SearchIndex,
   EmbeddingIndex,
   OpenAIEmbeddingProvider,
+  OllamaEmbeddingProvider,
+  type EmbeddingProvider,
   SaveMemoryInput,
   AuditLog,
   AuditContext,
@@ -35,25 +37,68 @@ import {
 import readline from "node:readline";
 import * as path from "node:path";
 
-/** Optional: aktiviert OpenAI-Embeddings wenn OPENAI_API_KEY (oder
- *  BASTRA_EMBEDDING_KEY) gesetzt ist. SearchIndex switcht dann auf
- *  Hybrid-Recall (BM25 + Vector via RRF). */
+/**
+ * Aktiviert Embeddings basierend auf BASTRA_EMBEDDING_PROVIDER:
+ *   - "ollama": Lokal via Ollama (Standard für neue Setups). Optional
+ *               BASTRA_OLLAMA_URL und BASTRA_EMBEDDING_MODEL.
+ *   - "openai": Cloud via OpenAI. Braucht OPENAI_API_KEY oder BASTRA_EMBEDDING_KEY.
+ *   - "none" / unset: Embeddings disabled (Recall fällt auf reines BM25).
+ *
+ * Default-Verhalten (kein BASTRA_EMBEDDING_PROVIDER gesetzt):
+ *   Wenn ein OpenAI-Key gesetzt ist → openai (Backwards-Compat).
+ *   Sonst disabled. Wer auf Ollama umstellen will, setzt explizit
+ *   BASTRA_EMBEDDING_PROVIDER=ollama.
+ */
 async function attachEmbeddings(search: SearchIndex, vault: Vault): Promise<void> {
-  const apiKey = process.env.OPENAI_API_KEY ?? process.env.BASTRA_EMBEDDING_KEY;
-  if (!apiKey) {
-    process.stderr.write(
-      "[bridge] embeddings disabled (no OPENAI_API_KEY / BASTRA_EMBEDDING_KEY)\n",
-    );
-    return;
-  }
-  const provider = new OpenAIEmbeddingProvider({ apiKey });
+  const provider = pickEmbeddingProvider();
+  if (!provider) return;
   const persistPath = path.join(VAULT_PATH!, ".bastra", "embeddings.json");
   const idx = new EmbeddingIndex(vault, provider, persistPath);
   await idx.start();
   search.useEmbeddings(idx);
   process.stderr.write(
-    `[bridge] embeddings ready (${idx.size()} vectors, ${idx.pendingSize()} pending)\n`,
+    `[bridge] embeddings ready provider=${provider.id} (${idx.size()} vectors, ${idx.pendingSize()} pending)\n`,
   );
+}
+
+function pickEmbeddingProvider(): EmbeddingProvider | null {
+  const requested = (process.env.BASTRA_EMBEDDING_PROVIDER ?? "").toLowerCase();
+  const apiKey = process.env.OPENAI_API_KEY ?? process.env.BASTRA_EMBEDDING_KEY;
+
+  if (requested === "none") {
+    process.stderr.write("[bridge] embeddings disabled (provider=none)\n");
+    return null;
+  }
+  if (requested === "ollama") {
+    return makeOllamaProvider();
+  }
+  if (requested === "openai") {
+    if (!apiKey) {
+      process.stderr.write(
+        "[bridge] embeddings disabled (provider=openai but no API key)\n",
+      );
+      return null;
+    }
+    return new OpenAIEmbeddingProvider({ apiKey });
+  }
+  // Backwards-compat: kein expliziter Provider, aber API-Key vorhanden.
+  if (apiKey) {
+    return new OpenAIEmbeddingProvider({ apiKey });
+  }
+  process.stderr.write(
+    "[bridge] embeddings disabled (no BASTRA_EMBEDDING_PROVIDER, no API key)\n",
+  );
+  return null;
+}
+
+function makeOllamaProvider(): OllamaEmbeddingProvider {
+  const baseURL = process.env.BASTRA_OLLAMA_URL ?? "http://localhost:11434";
+  const model = process.env.BASTRA_EMBEDDING_MODEL ?? "embeddinggemma";
+  // Optional: dim per env override-bar — bei nicht-default Modell (z.B.
+  // bge-m3 mit 1024 dim) muss der User das matchen.
+  const dimEnv = process.env.BASTRA_EMBEDDING_DIM;
+  const dim = dimEnv ? Number.parseInt(dimEnv, 10) : undefined;
+  return new OllamaEmbeddingProvider({ baseURL, model, dim });
 }
 
 const VAULT_PATH = process.env.NEXUS_VAULT_PATH;

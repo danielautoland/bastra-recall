@@ -40,6 +40,22 @@ export const SaveMemoryInput = z.object({
    * Share-Sheet) erben den Default.
    */
   sensitivity: z.enum(["private", "team", "public"]).optional(),
+  /**
+   * Memory-Lifecycle (#74): optionale Ablauf-/Review-Felder. `stale_status`
+   * wird vom Vault-Loader computet, ist hier aber akzeptiert damit die
+   * Mac-App es explizit setzen kann (z.B. manuelles „obsolete").
+   */
+  valid_until: z.string().optional(),
+  expires_after_days: z.number().int().positive().optional(),
+  last_reviewed_at: z.string().optional(),
+  stale_status: z.enum(["fresh", "aging", "stale", "expired"]).optional(),
+  /**
+   * Duplicate-Detection (#70): SHA-256-Hash + Größe der Original-Datei.
+   * Nur bei `type: doc` Memories sinnvoll. Mac-App-DocumentsImporter
+   * berechnet beide beim ersten Import.
+   */
+  content_hash: z.string().optional(),
+  content_size: z.number().int().nonnegative().optional(),
   source: z.string().optional(),
   confidence: z.number().min(0).max(1).optional(),
   affects_files: z.array(z.string()).optional(),
@@ -157,6 +173,12 @@ export async function saveMemory(
     related: input.related ?? [],
     related_via: input.related_via ?? [],
     sensitivity: input.sensitivity ?? "team",
+    ...(input.valid_until ? { valid_until: input.valid_until } : {}),
+    ...(input.expires_after_days ? { expires_after_days: input.expires_after_days } : {}),
+    ...(input.last_reviewed_at ? { last_reviewed_at: input.last_reviewed_at } : {}),
+    ...(input.stale_status ? { stale_status: input.stale_status } : {}),
+    ...(input.content_hash ? { content_hash: input.content_hash } : {}),
+    ...(input.content_size != null ? { content_size: input.content_size } : {}),
     ...(input.source ? { source: input.source } : {}),
     confidence: input.confidence ?? 1,
     created: today,

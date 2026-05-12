@@ -148,8 +148,10 @@ export class SearchIndex {
       hop: "direct" as const,
     }));
 
-    if (opts.expand_hops !== 1) return direct;
-    return this.appendOneHopNeighbors(direct, opts);
+    const withHops = opts.expand_hops === 1
+      ? this.appendOneHopNeighbors(direct, opts)
+      : direct;
+    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
   }
 
   /** Hybrid-Recall: BM25 + Vector via Reciprocal-Rank-Fusion. Wenn kein
@@ -217,8 +219,10 @@ export class SearchIndex {
         hop: "direct" as const,
       });
     }
-    if (opts.expand_hops !== 1) return out;
-    return this.appendOneHopNeighbors(out, opts);
+    const withHops = opts.expand_hops === 1
+      ? this.appendOneHopNeighbors(out, opts)
+      : out;
+    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
   }
 
   /**
@@ -346,4 +350,119 @@ function passesRecallFilters(
 
 function round(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+// MARK: - Lifecycle-Reranking (#74)
+
+/**
+ * Default-Verfallszeit pro Memory-Type. Identisch zu
+ * `Sources/Bastra/MemoryLifecycle.swift:defaultExpirationDays` — bei
+ * Änderungen beide Stellen mitziehen.
+ * `null` = Type altert nie automatisch (Bookmarks, Documents,
+ * Preferences, References).
+ */
+const DEFAULT_EXPIRATION_DAYS: Record<string, number | null> = {
+  lesson: 180,
+  decision: 365,
+  "project-fact": 90,
+  "meta-working": 365,
+  workflow: 180,
+  preference: null,
+  "user-preference": null,
+  reference: null,
+  bookmark: null,
+  doc: null,
+};
+
+const AGING_THRESHOLD_FRACTION = 0.75;
+
+/**
+ * Score-Multiplier basierend auf der Staleness (#74). Wird nach allen
+ * anderen Filtern in `recall`/`recallHybrid` auf den finalen Hit-Score
+ * angewandt — stale Memories ranken niedriger, expired noch niedriger.
+ */
+export type StaleStatus = "fresh" | "aging" | "stale" | "expired";
+
+const STALE_MULTIPLIERS: Record<StaleStatus, number> = {
+  fresh: 1.0,
+  aging: 0.85,
+  stale: 0.5,
+  expired: 0.2,
+};
+
+export function computeStaleness(
+  fm: Record<string, unknown>,
+  now: Date = new Date(),
+): StaleStatus {
+  const updated = parseDateValue(fm.updated);
+  const lastReviewed = parseDateValue(fm.last_reviewed_at);
+  const touch = Math.max(updated ?? 0, lastReviewed ?? 0);
+
+  const validUntil = parseDateValue(fm.valid_until);
+  if (validUntil != null) {
+    if (now.getTime() >= validUntil) return "expired";
+    const total = validUntil - touch;
+    const elapsed = now.getTime() - touch;
+    if (total > 0 && elapsed / total >= AGING_THRESHOLD_FRACTION) {
+      return "aging";
+    }
+    return "fresh";
+  }
+
+  const type = String(fm.type ?? "");
+  const userOverride =
+    typeof fm.expires_after_days === "number" ? (fm.expires_after_days as number) : null;
+  const typeDefault =
+    type in DEFAULT_EXPIRATION_DAYS ? DEFAULT_EXPIRATION_DAYS[type] : null;
+  const days = userOverride ?? typeDefault;
+  if (days == null || days <= 0) return "fresh";
+
+  if (touch <= 0) return "fresh";
+  const secondsSinceTouch = (now.getTime() - touch) / 1000;
+  const staleSeconds = days * 86400;
+  if (secondsSinceTouch <= 0) return "fresh";
+  const ratio = secondsSinceTouch / staleSeconds;
+  if (ratio >= 1.5) return "expired";
+  if (ratio >= 1.0) return "stale";
+  if (ratio >= AGING_THRESHOLD_FRACTION) return "aging";
+  return "fresh";
+}
+
+function parseDateValue(raw: unknown): number | null {
+  if (raw == null) return null;
+  // YAML kann `2026-05-12` als Date entlocken — wir akzeptieren beides.
+  if (raw instanceof Date) return raw.getTime();
+  if (typeof raw === "string" && raw.length > 0) {
+    const t = Date.parse(raw);
+    return Number.isNaN(t) ? null : t;
+  }
+  return null;
+}
+
+/**
+ * Wendet den Staleness-Multiplier auf einen Hit-Score an. Daemon nutzt
+ * die `vault.get(id).fm` als Quelle für das Frontmatter — die Computation
+ * läuft lazy beim Recall (kein File-Write).
+ */
+export function applyStalenessMultiplier(
+  hits: RecallHit[],
+  resolveFrontmatter: (id: string) => Record<string, unknown> | undefined,
+  now: Date = new Date(),
+): RecallHit[] {
+  for (const h of hits) {
+    const fm = resolveFrontmatter(h.id);
+    if (!fm) continue;
+    const status = computeStaleness(fm, now);
+    const mult = STALE_MULTIPLIERS[status];
+    if (mult !== 1.0) {
+      h.score = round(h.score * mult);
+    }
+  }
+  // Re-sort nach möglicher Score-Anpassung. Direct-Hits vor 1-hop-Hits
+  // bleiben aber Gruppe — wir sortieren INNERHALB jeder Gruppe.
+  const direct = hits.filter((h) => h.hop !== "1-hop");
+  const hops = hits.filter((h) => h.hop === "1-hop");
+  direct.sort((a, b) => b.score - a.score);
+  hops.sort((a, b) => b.score - a.score);
+  return [...direct, ...hops];
 }

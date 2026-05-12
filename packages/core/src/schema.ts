@@ -64,6 +64,20 @@ export const FrontmatterSchema = z.object({
     )
     .default([]),
   /**
+   * Memory-Lifecycle (#74): Verfallsdatum + Staleness-Tracking. Bastra
+   * markiert alte Decisions als „aging/stale/expired" damit der Recall sie
+   * niedriger rankt und die UI zur Review auffordert. Defaults pro Type
+   * werden in der Mac-App definiert (`MemoryLifecycle.defaultExpirationDays`).
+   * - `valid_until`: explizites Ablaufdatum (überschreibt expires_after_days)
+   * - `expires_after_days`: User-Override über die Type-Defaults
+   * - `last_reviewed_at`: letzter „noch aktuell"-Klick (resetet die Staleness)
+   * - `stale_status`: persistiert oder lazy computed; UI rendert Pill darauf
+   */
+  valid_until: dateString.optional(),
+  expires_after_days: z.number().int().positive().optional(),
+  last_reviewed_at: dateString.optional(),
+  stale_status: z.enum(["fresh", "aging", "stale", "expired"]).optional(),
+  /**
    * Sensitivity-Level (#58): steuert, welche Surfaces das Memory sehen.
    * - `private`: nur Mac-App, NICHT für externe MCP-Clients.
    * - `team` (default): lokale KI-Tools (Claude Code, Cursor) dürfen es sehen.
@@ -106,6 +120,12 @@ export const FrontmatterSchema = z.object({
   // gespeichert, während das File physisch in Inbox/ landet. Review-Sheet
   // zeigt's und verwendet es als Default beim Folder-Picker.
   ai_suggested_folder: z.string().optional(),
+  // #70 Duplicate-Detection: SHA-256-Hash + Größe der Original-Datei. Wird
+  // beim ersten Import gesetzt; spätere Imports prüfen Size-Match (schnell)
+  // und Hash-Match (definitiv) und skippen Duplikate. Optional, damit alte
+  // Sidecars ohne Hash kompatibel bleiben.
+  content_hash: z.string().optional(),
+  content_size: z.number().int().nonnegative().optional(),
   // Geo-Koordinaten + Reverse-Geocoding-Resultat. Mac-App schreibt EXIF-GPS
   // (Bilder) oder NSDataDetector-Adresse (Verträge/Rechnungen) hier rein,
   // Map-View rendert die Pins. Optional — Default für Docs ohne Location.

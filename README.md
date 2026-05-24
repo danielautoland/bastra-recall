@@ -2,6 +2,12 @@
 
 > A persistent teammate memory for Claude — across every Claude surface.
 
+## In a nutshell · Auf den Punkt
+
+🇬🇧 **What it is** — A long-term memory for Claude (and other AI assistants). Whenever you correct it, state a rule, or commit to a decision, it gets saved as a small note. In your next chat — days or weeks later — Claude pulls those notes back automatically. No more repeating yourself. Everything stays on your own Mac as plain Markdown files (Obsidian-compatible). Multiple AI tools can share the same memory at the same time.
+
+🇩🇪 **Was es ist** — Ein Langzeit-Gedächtnis für Claude (und andere AI-Assistenten). Sobald du etwas korrigierst, eine Regel aufstellst oder eine Entscheidung triffst, wird das als kleine Notiz gespeichert. In der nächsten Sitzung — Tage oder Wochen später — holt Claude diese Notizen automatisch wieder hervor. Schluss mit ewigem Wiederholen. Alles bleibt lokal auf deinem Mac als reine Markdown-Dateien (Obsidian-kompatibel). Mehrere AI-Tools können sich dieselbe Erinnerung gleichzeitig teilen.
+
 **Status:** 🟢 Early alpha — M0 (eval) and M1 (read path) done, M2 (save path) functional, M3 reflex layer functional with two of four hooks live: `PreToolUse` (recall before each Write/Edit) and `SessionStart` (preload top memorys at session open). Distribution and multi-surface are next. See [PLAN.md](./PLAN.md).
 
 ---

@@ -4,8 +4,9 @@
  *
  * - Pro-Feature: Triage will diese hinter Lizenz-Gate. Bis das Pro-License-
  *   Service da ist (separates Issue), gaten wir mit env-Flag
- *   `NEXUS_DOCUMENT_WRITE=1`. Tool-Liste wird komplett ausgeblendet wenn
- *   das Flag fehlt — externe MCP-Caller sehen nur Read-Tools.
+ *   `BASTRA_DOCUMENT_WRITE=1` (Legacy: `NEXUS_DOCUMENT_WRITE`). Tool-Liste
+ *   wird komplett ausgeblendet wenn das Flag fehlt — externe MCP-Caller
+ *   sehen nur Read-Tools.
  *
  * - Cloud-Watcher-Mitigation: Schreib-Pfad reagiert NICHT auf chokidar
  *   (unzuverlässig auf GoogleDrive/iCloud). Stattdessen sofortiger
@@ -17,7 +18,7 @@ import { writeFile, mkdir, copyFile, unlink, stat, rename, access } from "node:f
 import { join, basename, isAbsolute } from "node:path";
 import { z } from "zod";
 import matter from "gray-matter";
-import type { Vault } from "@nexus-recall/core";
+import type { Vault } from "@bastra-recall/core";
 
 // ─── Argument schemas ───────────────────────────────────────────
 

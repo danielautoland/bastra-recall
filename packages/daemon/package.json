@@ -1,5 +1,5 @@
 {
-  "name": "@nexus-recall/daemon",
+  "name": "@bastra-recall/daemon",
   "version": "0.1.0",
   "description": "MCP server exposing recall + load_memory over a markdown vault.",
   "type": "module",
@@ -9,23 +9,25 @@
     "node": ">=20"
   },
   "bin": {
-    "nexus-recall": "./dist/index.js",
-    "nexus-recall-bridge": "./dist/bridge.js",
-    "nexus-recall-hook": "./dist/hook.js",
-    "nexus-recall-session-hook": "./dist/session-hook.js"
+    "bastra-recall": "./dist/index.js",
+    "bastra-recall-mcp": "./dist/mcp-forwarder.js",
+    "bastra-recall-bridge": "./dist/bridge.js",
+    "bastra-recall-hook": "./dist/hook.js",
+    "bastra-recall-session-hook": "./dist/session-hook.js"
   },
   "main": "./dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc",
+    "build": "tsc && chmod +x dist/index.js dist/mcp-forwarder.js dist/bridge.js dist/hook.js dist/session-hook.js",
     "start": "node dist/index.js",
     "check:types": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",
-    "smoke:telemetry": "tsx scripts/telemetry-smoke.ts"
+    "smoke:telemetry": "tsx scripts/telemetry-smoke.ts",
+    "backfill:related": "tsx scripts/backfill-related.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "@nexus-recall/core": "*",
+    "@bastra-recall/core": "*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

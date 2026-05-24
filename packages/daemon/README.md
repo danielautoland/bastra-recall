@@ -1,4 +1,4 @@
-# @nexus-recall/daemon
+# @bastra-recall/daemon
 
 MCP server over a markdown memory vault. Two tools: `recall(query, …)` and `load_memory(id)`.
 
@@ -20,8 +20,8 @@ It does **not** save memorys yet — that's M2. It does **not** run hooks — th
 Requires Node 20+.
 
 ```bash
-git clone https://github.com/danielautoland/nexus-recall.git
-cd nexus-recall/packages/daemon
+git clone https://github.com/danielautoland/bastra-recall.git
+cd bastra-recall/packages/daemon
 npm install
 npm run build
 ```
@@ -33,18 +33,18 @@ Add to your `~/.claude.json`:
 ```json
 {
   "mcpServers": {
-    "nexus-recall": {
+    "bastra-recall": {
       "command": "node",
-      "args": ["/absolute/path/to/nexus-recall/packages/daemon/dist/index.js"],
+      "args": ["/absolute/path/to/bastra-recall/packages/daemon/dist/index.js"],
       "env": {
-        "NEXUS_VAULT_PATH": "/absolute/path/to/your/Obsidian-vault/memorys"
+        "BASTRA_VAULT_PATH": "/absolute/path/to/your/Obsidian-vault/memorys"
       }
     }
   }
 }
 ```
 
-The `NEXUS_VAULT_PATH` is the **subfolder of your Obsidian vault that holds the memorys** — not the vault root. Restart Claude Code.
+The `BASTRA_VAULT_PATH` is the **subfolder of your Obsidian vault that holds the memorys** — not the vault root. Restart Claude Code.
 
 In a session, two new tools appear: `recall` and `load_memory`. Claude calls them autonomously when the CLAUDE.md instruction (see [`../../docs/triggers.md`](../../docs/triggers.md)) says so.
 
@@ -75,9 +75,9 @@ npm run check:types     # type-check only
 
 | env var | required | default | meaning |
 |---|---|---|---|
-| `NEXUS_VAULT_PATH` | yes | — | absolute path to the directory holding `.md` memory files |
-| `NEXUS_LOG_PATH` | no | `~/.nexus-recall/logs` | where telemetry JSONL files are written (out-of-vault on purpose, so they're not indexed) |
-| `NEXUS_TELEMETRY` | no | `on` | set to `off` to disable telemetry writes entirely |
+| `BASTRA_VAULT_PATH` | yes | — | absolute path to the directory holding `.md` memory files |
+| `BASTRA_LOG_PATH` | no | `~/.bastra/logs` | where telemetry JSONL files are written (out-of-vault on purpose, so they're not indexed) |
+| `BASTRA_TELEMETRY` | no | `on` | set to `off` to disable telemetry writes entirely |
 
 ### Telemetry
 
@@ -88,7 +88,7 @@ Every `recall`, `load_memory` and `save_memory` call appends one JSON line to `e
 - saves per session, type/scope distribution, % overwrite vs. new
 - save→follows_recall rate (was a duplicate-check done?)
 
-Logs live outside the vault on purpose so the file watcher doesn't index them. Tail one to watch live: `tail -f ~/.nexus-recall/logs/events-$(date +%F).jsonl`.
+Logs live outside the vault on purpose so the file watcher doesn't index them. Tail one to watch live: `tail -f ~/.bastra/logs/events-$(date +%F).jsonl`.
 
 ## Limitations (v0)
 

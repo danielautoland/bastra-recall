@@ -134,7 +134,7 @@ function pathSegmentTopics(filePath: string): string[] {
   return out;
 }
 
-/** Best-effort project name from cwd, e.g. /Users/x/Projekte/bastra-open → "bastra-open". */
+/** Best-effort project name from cwd, e.g. /Users/x/Projekte/bastra-recall → "bastra-recall". */
 export function detectProject(cwd: string): string | null {
   if (!cwd) return null;
   const parts = cwd.split("/").filter(Boolean);
@@ -174,7 +174,7 @@ export function detectTopics(intent: ToolIntent): TopicResult {
   // be phrased like "creating new input component" — so action verbs help.
   //
   // We deliberately do NOT inject the full file_path into the query: project
-  // / monorepo names (e.g. "bastra-open") are very high-frequency tokens
+  // / monorepo names (e.g. "bastra-recall") are very high-frequency tokens
   // across project memorys and would drown out specific topic signal. Path
   // segments still feed `topics` above, which is enough.
   const head = `${intentVerb} ${fileLabel}`;

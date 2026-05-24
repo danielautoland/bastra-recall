@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Install / update the nexus-recall hooks in ~/.claude/settings.json.
+# Install / update the bastra-recall hooks in ~/.claude/settings.json.
 #
 # Registers two hooks:
 #   - PreToolUse  → recall before each Write/Edit/MultiEdit/NotebookEdit
 #   - SessionStart → preload top memorys when a fresh session opens
 #
 # Idempotent: re-running updates paths if they changed; will not duplicate
-# the matcher blocks. Backs up settings.json before each write.
+# the matcher blocks. Cleans up legacy `__nexusRecall`-marked entries from
+# the pre-rename setup. Backs up settings.json before each write.
 #
 # Usage:
 #   bash packages/skill/install-hook.sh                # install
@@ -69,11 +70,17 @@ cfg.hooks ??= {};
 function isOurs(matcher) {
   if (!matcher || typeof matcher !== "object") return false;
   const hooks = Array.isArray(matcher.hooks) ? matcher.hooks : [];
-  return hooks.some((h) =>
-    h && typeof h === "object" &&
-    (h.__nexusRecall === true ||
-      (typeof h.command === "string" && h.command.includes("nexus-recall") && h.command.includes("hook"))),
-  );
+  return hooks.some((h) => {
+    if (!h || typeof h !== "object") return false;
+    if (h.__bastraRecall === true || h.__nexusRecall === true) return true;
+    const cmd = typeof h.command === "string" ? h.command : "";
+    // Pfad-Heuristik: our hook binaries enden auf /daemon/dist/{hook,session-hook}.js,
+    // unabhängig vom Repo-Folder-Namen (bastra-recall / bastra-open / nexus-recall).
+    if (cmd.includes("/daemon/dist/hook.js")) return true;
+    if (cmd.includes("/daemon/dist/session-hook.js")) return true;
+    if ((cmd.includes("bastra-recall") || cmd.includes("nexus-recall")) && cmd.includes("hook")) return true;
+    return false;
+  });
 }
 
 function rewrite(eventName, install) {
@@ -94,8 +101,8 @@ if (action === "uninstall") {
       type: "command",
       command: `node ${JSON.stringify(preToolBin).slice(1, -1)}`,
       timeout: 2,
-      __nexusRecall: true,
-      __note: "nexus-recall PreToolUse hook",
+      __bastraRecall: true,
+      __note: "bastra-recall PreToolUse hook",
     }],
   }]);
   rewrite("SessionStart", [{
@@ -104,8 +111,8 @@ if (action === "uninstall") {
       type: "command",
       command: `node ${JSON.stringify(sessionBin).slice(1, -1)}`,
       timeout: 3,
-      __nexusRecall: true,
-      __note: "nexus-recall SessionStart hook",
+      __bastraRecall: true,
+      __note: "bastra-recall SessionStart hook",
     }],
   }]);
 }
@@ -120,7 +127,7 @@ if (action === "print") {
 
 case "$ACTION" in
   install)
-    echo "✓ nexus-recall hooks registered in ${SETTINGS_FILE}"
+    echo "✓ bastra-recall hooks registered in ${SETTINGS_FILE}"
     echo "  PreToolUse:   node ${PRE_TOOL_BIN}"
     echo "  SessionStart: node ${SESSION_BIN}"
     echo "  Backup:       ${SETTINGS_FILE}.bak"
@@ -128,7 +135,7 @@ case "$ACTION" in
     echo "Restart Claude Code (or open a fresh session) to activate."
     ;;
   uninstall)
-    echo "✓ nexus-recall hooks removed from ${SETTINGS_FILE}"
+    echo "✓ bastra-recall hooks removed from ${SETTINGS_FILE}"
     echo "  Backup: ${SETTINGS_FILE}.bak"
     ;;
   print)

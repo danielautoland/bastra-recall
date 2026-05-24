@@ -12,7 +12,7 @@ This schema defines how a single memory is stored. It must support four concrete
 - Vault root: `~/nexus-vault/`
 - Files: flat directory, one `.md` per memory. No nested folders — `topic_path` does the structuring.
 - Filename = `id` + `.md`, slug-style (lowercase-kebab-case).
-- Index: `~/.nexus-recall/index.db` (SQLite, mirrors vault content).
+- Index: `~/.bastra/index.db` (SQLite, mirrors vault content).
 
 Flat layout is deliberate. Folders force rigid hierarchy; the schema's `topic_path` and `tags` give a richer, multi-axis structure that Obsidian's graph view and tag pane already expose.
 
@@ -280,15 +280,15 @@ updated: 2026-05-01
 
 ```yaml
 ---
-id: nexus-recall-storage-sqlite-fts5
-title: "nexus-recall storage: SQLite + FTS5, embeddings later"
+id: bastra-recall-storage-sqlite-fts5
+title: "bastra-recall storage: SQLite + FTS5, embeddings later"
 type: decision
 summary: "Chose SQLite (graph) + FTS5 (keyword) for v0. Embeddings (bge-m3 local) deferred to v0.5 — only added if FTS5 misses too often."
-topic_path: [nexus-recall, architecture, storage]
+topic_path: [bastra-recall, architecture, storage]
 tags: [sqlite, fts5, embeddings, architecture]
-scope: nexus-recall
+scope: bastra-recall
 recall_when:
-  - storage choice question on nexus-recall
+  - storage choice question on bastra-recall
   - retrieval quality discussion
   - considering embeddings
 related: []
@@ -333,7 +333,7 @@ The save tool rejects any memory that:
 - Has duplicate `id` in the vault
 - References non-existent ids in `related`
 
-A `nexus-recall lint` command runs these checks against the whole vault.
+A `bastra-recall lint` command runs these checks against the whole vault.
 
 ## Open questions for v0
 

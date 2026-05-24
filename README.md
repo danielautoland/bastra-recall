@@ -1,4 +1,4 @@
-# nexus-recall
+# bastra-recall
 
 > A persistent teammate memory for Claude — across every Claude surface.
 
@@ -14,7 +14,7 @@ Claude has memory features, but they're **passive**: a static index file at best
 
 The cost isn't just frustration — it's that the user ends up thinking *for* Claude. *"Wait, didn't we solve this last week?"* That's the bug.
 
-## What nexus-recall does
+## What bastra-recall does
 
 A persistent memory layer that:
 
@@ -35,7 +35,7 @@ If recurring mistakes still recur, if the user still has to re-state preferences
 Vault (configurable, plain markdown + YAML frontmatter, Obsidian-compatible)
           │  chokidar (auto-polls on cloud-storage mounts)
           ▼
-nexus-recall daemon (TypeScript / Node 20+, single local process)
+bastra-recall daemon (TypeScript / Node 20+, single local process)
   - In-memory BM25 index (MiniSearch) — recall_when×5, title×4, tags×3
   - MCP tools today: recall, load_memory, save_memory
   - Save path: validates frontmatter → writes file → force-reindexes
@@ -50,8 +50,8 @@ Claude Code Skill (packages/skill/SKILL.md)
 ```
 
 Hooks: two reflex hooks ship with the daemon, both speaking to its loopback HTTP endpoint:
-- **`PreToolUse`** (`nexus-recall-hook`) — fires before every `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. Topic-detects from the tool intent and injects `<recall-hints>` as `additionalContext`.
-- **`SessionStart`** (`nexus-recall-session-hook`) — fires on `startup`/`resume`/`clear`/`compact`. Preloads top user-prefs + cross-project rules + project-scoped memorys as `<session-context>` so the model knows who, what, and what-not from the first prompt.
+- **`PreToolUse`** (`bastra-recall-hook`) — fires before every `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. Topic-detects from the tool intent and injects `<recall-hints>` as `additionalContext`.
+- **`SessionStart`** (`bastra-recall-session-hook`) — fires on `startup`/`resume`/`clear`/`compact`. Preloads top user-prefs + cross-project rules + project-scoped memorys as `<session-context>` so the model knows who, what, and what-not from the first prompt.
 
 `UserPromptSubmit` and `Stop` hooks remain queued for v0.5 once dogfood reveals where they'd close gaps. Telemetry (`scripts/stats.ts`) tracks per-hook latency, hint-quality, and follow-through (did the model actually `load_memory` after a hint).
 
@@ -87,36 +87,76 @@ The `recall_when` field is the bridge between save and recall: when saving, Clau
 Pre-requisites: Node 20+, Claude Code, an Obsidian vault (or any folder for `.md` files).
 
 ```bash
-git clone https://github.com/danielautoland/nexus-recall.git
-cd nexus-recall/packages/daemon
+git clone https://github.com/danielautoland/bastra-recall.git
+cd bastra-recall/packages/daemon
 npm install
 npm run build
 ```
 
-Add the MCP server to Claude Code (`~/.claude.json`):
+Add the MCP server to Claude Code (`~/.claude.json`).
+
+**Recommended (forwarder mode — shares one daemon across all sessions):**
 
 ```json
-"nexus-recall": {
+"bastra-recall": {
   "command": "node",
-  "args": ["/abs/path/to/nexus-recall/packages/daemon/dist/index.js"],
+  "args": ["/abs/path/to/bastra-recall/packages/daemon/dist/mcp-forwarder.js"],
   "env": {
-    "NEXUS_VAULT_PATH": "/abs/path/to/your/vault/memorys"
+    "BASTRA_VAULT_PATH": "/abs/path/to/your/vault/memorys"
   }
 }
 ```
 
+The forwarder is a thin stdio-MCP wrapper that talks to a single local HTTP daemon (port 6723 by default). All MCP clients — Claude Code, Claude Desktop, Cursor, additional sessions — share the same vault state, embedding index, and telemetry. The forwarder auto-spawns the daemon on first run if no one is listening yet.
+
+**Standalone mode (one MCP client only, no sharing):**
+
+```json
+"bastra-recall": {
+  "command": "node",
+  "args": ["/abs/path/to/bastra-recall/packages/daemon/dist/index.js"],
+  "env": {
+    "BASTRA_VAULT_PATH": "/abs/path/to/your/vault/memorys"
+  }
+}
+```
+
+Each session spawns its own embedded daemon. Simpler but loses cross-session vault consistency on cloud-storage mounts where the file watcher lags.
+
 Activate the Skill (save/recall trigger discipline) and the reflex hooks (PreToolUse + SessionStart):
 
 ```bash
-bash packages/skill/install.sh        # copies SKILL.md → ~/.claude/skills/nexus-recall/
+bash packages/skill/install.sh        # copies SKILL.md → ~/.claude/skills/bastra-recall/
 bash packages/skill/install-hook.sh   # registers PreToolUse + SessionStart hooks in ~/.claude/settings.json
 ```
 
-Then **restart Claude Code** — Skills and hooks are read at startup. Both hooks post to `http://127.0.0.1:6723/hook/recall` (port configurable via `NEXUS_HTTP_PORT`); if no daemon is reachable they silently no-op, so an unloaded MCP server never blocks Claude.
+Then **restart Claude Code** — Skills and hooks are read at startup. Both hooks post to `http://127.0.0.1:6723/hook/recall` (port configurable via `BASTRA_HTTP_PORT`); if no daemon is reachable they silently no-op, so an unloaded MCP server never blocks Claude.
 
 Re-run `install.sh` whenever `SKILL.md` changes; re-run `install-hook.sh` only if hook binary paths move. To remove the hooks again: `bash packages/skill/install-hook.sh --uninstall`.
 
-A Homebrew tap and `nexus-recall init` are tracked as roadmap issues.
+A Homebrew tap and `bastra-recall init` are tracked as roadmap issues.
+
+## REST API (for non-MCP clients)
+
+The daemon exposes a REST API on `http://127.0.0.1:6723/api/v1/` covering every tool the MCP server offers. This is the integration point for clients that can't speak stdio-MCP — most notably **ChatGPT Custom GPT Actions**, which call HTTPS endpoints with an OpenAPI schema.
+
+Endpoints (all `POST`, JSON body):
+
+| Endpoint | Tool |
+|---|---|
+| `/api/v1/recall` | recall |
+| `/api/v1/load_memory` | load_memory |
+| `/api/v1/save_memory` | save_memory |
+| `/api/v1/find_document` / `read_document` / `open_document` | document search |
+| `/api/v1/save_document` / `recategorize_document` / `move_document` | document write (Pro) |
+
+Auth and CORS:
+
+- If `BASTRA_API_TOKEN` is set, the daemon requires `Authorization: Bearer <token>` on every `/api/v1/*` request.
+- Loopback callers (`127.0.0.1`) bypass auth by default. Set `BASTRA_AUTH_LOOPBACK_SKIP=0` to require the token even locally.
+- CORS is permissive by default (`Access-Control-Allow-Origin: *`). Restrict via `BASTRA_CORS_ORIGIN=https://your.host`.
+
+To expose this API to a hosted client like ChatGPT, point a tunnel (Cloudflare Tunnel / ngrok / your own reverse proxy) at `127.0.0.1:6723` and configure the Custom GPT with the tunnel URL + your token. An OpenAPI 3.0 spec is tracked as a roadmap issue.
 
 ## Roadmap
 
@@ -129,7 +169,7 @@ Milestone-based, not phase-based. Each gate is a hard pass/fail.
 | **M2** | Save path + autonomous-save triggers | 🟡 **Functional** — `save_memory` MCP tool live with force-reindex. Trigger discipline shipped as a Skill. False-save / missed-save metrics not yet collected. |
 | **M0.5** | Stress-test recall (paraphrased / cross-memory / anti-hallucination) | ⏳ Open — see issues. |
 | **M3** | Reflex layer: hooks for `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Functional (PreToolUse + SessionStart)** — both ship and post to daemon's `/hook/recall`. Telemetry tracks follow-through (load_memory ↔ hint correlation). `UserPromptSubmit` and `Stop` queued for v0.5 once data shows where they'd help. |
-| **Distribution** | Homebrew tap, `nexus-recall init`, npm package | ⏳ Open. |
+| **Distribution** | Homebrew tap, `bastra-recall init`, npm package | ⏳ Open. |
 | **Multi-surface** | HTTP transport for Claude.ai web (Custom Connector) | ⏳ Open. |
 
 Out of v0: embeddings (deferred to v0.5 only if M0.5 fails), codebase indexing, multi-device sync, web UI, team-sharing, SaaS. See [PLAN.md](./PLAN.md).

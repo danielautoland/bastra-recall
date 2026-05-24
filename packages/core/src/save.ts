@@ -80,6 +80,55 @@ export interface SaveMemoryResult {
 
 const SLUG_MAX_LEN = 80;
 
+/**
+ * Marker-Kommentare, zwischen denen der RelatedEnricher die Auto-Wikilink-
+ * Section im Body verwaltet. Obsidian rendert HTML-Kommentare als unsichtbar,
+ * Wikilinks dazwischen werden aber als Edges im Graph erkannt — so kriegt
+ * Obsidian unseren Auto-Graph, ohne dass die User-Notizen vermüllt werden.
+ *
+ * Die Konstanten sind hier (und nicht in related-enrich.ts), damit
+ * `extractWikilinks()` die Section überspringen kann — sonst würde der
+ * Save-Pfad die Auto-Wikilinks erneut in `related[]` spiegeln, was die
+ * Trennung von Hand- und Auto-Links zerfließen ließe.
+ */
+export const AUTO_RELATED_START = "<!-- bastra:auto-related:start -->";
+export const AUTO_RELATED_END = "<!-- bastra:auto-related:end -->";
+
+/** Entfernt die Auto-Related-Section (Heading-Zeile inklusive Markern bis
+ *  zur End-Marker-Zeile inkl.) aus dem Body. Wenn keine Section da ist,
+ *  unverändert zurück. */
+export function stripAutoRelatedSection(body: string): string {
+  const startIdx = body.indexOf(AUTO_RELATED_START);
+  const endIdx = body.indexOf(AUTO_RELATED_END);
+  if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) return body;
+  const lineStart = body.lastIndexOf("\n", startIdx) + 1;
+  const afterEndNewline = body.indexOf("\n", endIdx + AUTO_RELATED_END.length);
+  const cutEnd = afterEndNewline === -1 ? body.length : afterEndNewline + 1;
+  return body.slice(0, lineStart) + body.slice(cutEnd);
+}
+
+/**
+ * Extrahiert `[[memory-id]]`-Wikilinks aus einem Memory-Body. Slugs sind
+ * `^[a-z0-9][a-z0-9_-]{0,79}$` (passt zur `slugify()`-Ausgabe). Ergebnis ist
+ * dedupliziert, in der Reihenfolge des ersten Vorkommens.
+ *
+ * Die Auto-Related-Section wird übersprungen — sonst floaten Auto-Links in
+ * `related[]` rein, und wir verlieren die Unterscheidung zu Hand-Links.
+ */
+const WIKILINK_RE = /\[\[([a-z0-9][a-z0-9_-]{0,79})\]\]/g;
+export function extractWikilinks(body: string): string[] {
+  const scanned = stripAutoRelatedSection(body);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const match of scanned.matchAll(WIKILINK_RE)) {
+    const id = match[1];
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
 export function slugify(input: string): string {
   const lower = input
     .toLowerCase()
@@ -99,6 +148,17 @@ export function slugify(input: string): string {
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+function dedupe<T>(items: T[]): T[] {
+  const seen = new Set<T>();
+  const out: T[] = [];
+  for (const item of items) {
+    if (seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -161,6 +221,15 @@ export async function saveMemory(
   }
 
   const today = todayISO();
+  // Wikilinks aus dem Body in `related[]` spiegeln. Im OSS-Stack existiert
+  // sonst keine Stelle, die `[[id]]`-Referenzen in Strukturdaten überführt
+  // — Multi-Hop-Recall sähe sie nie. Reihenfolge: vom Caller mitgegebene
+  // related zuerst, dann neue aus dem Body, dedupliziert.
+  const bodyLinks = extractWikilinks(input.body);
+  const mergedRelated = dedupe([...(input.related ?? []), ...bodyLinks]).filter(
+    (rel) => rel !== id, // self-link macht keinen Sinn
+  );
+
   const fm: Record<string, unknown> = {
     id,
     title: input.title,
@@ -170,7 +239,7 @@ export async function saveMemory(
     tags: input.tags,
     scope: input.scope,
     recall_when: input.recall_when,
-    related: input.related ?? [],
+    related: mergedRelated,
     related_via: input.related_via ?? [],
     sensitivity: input.sensitivity ?? "team",
     ...(input.valid_until ? { valid_until: input.valid_until } : {}),

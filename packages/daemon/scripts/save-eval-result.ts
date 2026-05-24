@@ -3,11 +3,11 @@
  * One-shot: persist the M0 eval result as a memory in the vault,
  * exercising the new saveMemory() path end-to-end.
  */
-import { saveMemory } from "@nexus-recall/core";
+import { saveMemory } from "@bastra-recall/core";
 
-const VAULT_PATH = process.env.NEXUS_VAULT_PATH;
+const VAULT_PATH = process.env.BASTRA_VAULT_PATH ?? process.env.NEXUS_VAULT_PATH;
 if (!VAULT_PATH) {
-  console.error("FATAL: NEXUS_VAULT_PATH not set");
+  console.error("FATAL: BASTRA_VAULT_PATH not set");
   process.exit(2);
 }
 
@@ -57,12 +57,12 @@ Diese Tests gehören in M0.5 oder beim ersten Schmerz.
 - **v0.5+**: Embeddings nur, wenn paraphrased-query-Eval unter Schwelle fällt.
 - **Nicht jetzt**: Hybrid-Ranking, Re-Ranker, Vector-DB.
 `,
-    topic_path: ["nexus-recall", "eval", "M0"],
-    tags: ["nexus-recall", "eval", "decision", "search", "bm25"],
-    scope: "nexus-recall",
+    topic_path: ["bastra-recall", "eval", "M0"],
+    tags: ["bastra-recall", "eval", "decision", "search", "bm25"],
+    scope: "bastra-recall",
     recall_when: [
-      "search-quality of nexus-recall in Frage stellen",
-      "Embeddings für nexus-recall überlegen",
+      "search-quality of bastra-recall in Frage stellen",
+      "Embeddings für bastra-recall überlegen",
       "BM25 vs vector retrieval Trade-off",
       "M0 eval ergebnis nachschauen",
       "ist FTS5/MiniSearch genug?",

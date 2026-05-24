@@ -5,14 +5,14 @@
  * Run: NEXUS_VAULT_PATH=/path/to/vault tsx scripts/smoke.ts
  *      (or: npm run smoke  — picks up env from default below)
  */
-import { Vault, SearchIndex } from "@nexus-recall/core";
+import { Vault, SearchIndex } from "@bastra-recall/core";
 import { resolve } from "node:path";
 
 const DEFAULT_VAULT = resolve(
   import.meta.dirname,
   "../../../private/migration/memorys",
 );
-const VAULT = process.env.NEXUS_VAULT_PATH ?? DEFAULT_VAULT;
+const VAULT = process.env.BASTRA_VAULT_PATH ?? process.env.NEXUS_VAULT_PATH ?? DEFAULT_VAULT;
 
 const QUERIES: { query: string; expectIds?: string[] }[] = [
   { query: "scrollbar", expectIds: ["carnexus-scrollbar-subtle-pattern"] },

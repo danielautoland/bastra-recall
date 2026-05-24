@@ -1,11 +1,11 @@
 ---
-name: nexus-recall
-description: Persistent teammate-memory for Claude across sessions. USE PROACTIVELY whenever the user (a) expresses repetition or frustration about a recurring issue ("wieder", "schon wieder", "wie oft", emphatic caps), (b) states an explicit durable rule ("immer X", "nie Y", "bei diesem Projekt …"), (c) corrects a recurring tendency in your behavior, (d) finalizes an architectural decision after weighing options, or (e) confirms a workflow ("lass uns das immer so machen"). Also USE before writing/editing code, before giving multi-step plans, and at session start — to recall stored lessons, preferences, and project facts via the nexus-recall MCP server.
+name: bastra-recall
+description: Persistent teammate-memory for Claude across sessions. USE PROACTIVELY whenever the user (a) expresses repetition or frustration about a recurring issue ("wieder", "schon wieder", "wie oft", emphatic caps), (b) states an explicit durable rule ("immer X", "nie Y", "bei diesem Projekt …"), (c) corrects a recurring tendency in your behavior, (d) finalizes an architectural decision after weighing options, or (e) confirms a workflow ("lass uns das immer so machen"). Also USE before writing/editing code, before giving multi-step plans, and at session start — to recall stored lessons, preferences, and project facts via the bastra-recall MCP server.
 ---
 
-# nexus-recall — autonomous teammate memory
+# bastra-recall — autonomous teammate memory
 
-You have a persistent memory across sessions via the `nexus-recall` MCP server (tools: `recall`, `load_memory`, `save_memory`). Treat it as YOUR own long-term memory, not as a tool the user has to invoke.
+You have a persistent memory across sessions via the `bastra-recall` MCP server (tools: `recall`, `load_memory`, `save_memory`). Treat it as YOUR own long-term memory, not as a tool the user has to invoke.
 
 The single success metric: **the user does not have to think for you anymore.** Recurring mistakes don't recur. Stable preferences don't get re-stated. Project facts don't get re-discovered.
 

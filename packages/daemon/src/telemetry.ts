@@ -1,7 +1,25 @@
 import { appendFile, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { envFirst } from "./env.js";
+
+/**
+ * Migration-aware default log directory: prefer `~/.bastra/logs`, aber
+ * solange das alte `~/.nexus-recall/logs` existiert und das neue noch
+ * nicht, lesen wir aus dem alten weiter — damit Daniels existing
+ * telemetry beim Migrationsfenster nicht orphan wird. Sobald die Mac-App
+ * den `~/.nexus-recall/`-Folder nach `~/.bastra/` verschoben hat (siehe
+ * Bastra.AppDelegate Migration), nimmt sich der daemon den neuen Pfad.
+ */
+function defaultLogDir(): string {
+  const next = join(homedir(), ".bastra", "logs");
+  const legacy = join(homedir(), ".nexus-recall", "logs");
+  if (existsSync(next)) return next;
+  if (existsSync(legacy)) return legacy;
+  return next;
+}
 
 export type TelemetryEvent =
   | RecallEvent
@@ -136,9 +154,12 @@ export class Telemetry {
 
   constructor() {
     this.enabled =
-      (process.env.NEXUS_TELEMETRY ?? "on").toLowerCase() !== "off";
+      (envFirst("BASTRA_TELEMETRY", "NEXUS_TELEMETRY") ?? "on").toLowerCase() !== "off";
+    // Log-Pfad bleibt bei `~/.nexus-recall/logs` bis zur User-Data-Migration
+    // (Daniel hat existing logs, die wir nicht orphanen wollen).
     this.logDir =
-      process.env.NEXUS_LOG_PATH ?? join(homedir(), ".nexus-recall", "logs");
+      envFirst("BASTRA_LOG_PATH", "NEXUS_LOG_PATH") ??
+      defaultLogDir();
     this.sessionId = randomUUID();
   }
 
@@ -258,20 +279,22 @@ export class Telemetry {
       await appendFile(file, JSON.stringify(event) + "\n", "utf8");
     } catch (err) {
       // Telemetry must never break a tool call.
-      console.error(`[nexus-recall] telemetry write failed: ${(err as Error).message}`);
+      console.error(`[bastra-recall] telemetry write failed: ${(err as Error).message}`);
     }
   }
 }
 
 export function fireAndForget(p: Promise<unknown>): void {
   p.catch((err) => {
-    console.error(`[nexus-recall] telemetry: ${(err as Error).message}`);
+    console.error(`[bastra-recall] telemetry: ${(err as Error).message}`);
   });
 }
 
 export function logDirFor(): string {
-  return process.env.NEXUS_LOG_PATH ?? join(homedir(), ".nexus-recall", "logs");
+  return envFirst("BASTRA_LOG_PATH", "NEXUS_LOG_PATH") ?? defaultLogDir();
 }
+
+export { defaultLogDir };
 
 // Re-export so consumers can build paths if needed.
 export { dirname };

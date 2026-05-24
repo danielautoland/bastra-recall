@@ -9,7 +9,7 @@ import { Telemetry } from "../src/telemetry.js";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-const TMP_LOG = "/tmp/nexus-recall-telemetry-smoke";
+const TMP_LOG = "/tmp/bastra-recall-telemetry-smoke";
 
 function assert(cond: unknown, msg: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
@@ -17,8 +17,8 @@ function assert(cond: unknown, msg: string): asserts cond {
 
 async function main(): Promise<void> {
   await rm(TMP_LOG, { recursive: true, force: true });
-  process.env.NEXUS_LOG_PATH = TMP_LOG;
-  process.env.NEXUS_TELEMETRY = "on";
+  process.env.BASTRA_LOG_PATH = TMP_LOG;
+  process.env.BASTRA_TELEMETRY = "on";
 
   const t = new Telemetry();
   assert(t.isEnabled(), "telemetry should be enabled by default");
@@ -80,9 +80,10 @@ async function main(): Promise<void> {
   );
 
   // Disable check
-  process.env.NEXUS_TELEMETRY = "off";
+  delete process.env.BASTRA_TELEMETRY;
+  process.env.BASTRA_TELEMETRY = "off";
   const off = new Telemetry();
-  assert(!off.isEnabled(), "telemetry should be disabled when NEXUS_TELEMETRY=off");
+  assert(!off.isEnabled(), "telemetry should be disabled when BASTRA_TELEMETRY=off");
 
   await rm(TMP_LOG, { recursive: true, force: true });
   console.error(`[telemetry-smoke] PASS — ${lines.length} events, correlation ok`);

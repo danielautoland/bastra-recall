@@ -1,5 +1,5 @@
 /**
- * @nexus-recall/core — public API.
+ * @bastra-recall/core — public API.
  *
  * Reusable building blocks shared by the daemon (MCP server) and the
  * Mac-app surface. No transport coupling lives here.
@@ -11,7 +11,16 @@ export type { VaultEvent, VaultListener } from "./vault.js";
 export { SearchIndex } from "./search.js";
 export type { RecallHit, RecallOptions } from "./search.js";
 
-export { saveMemory, deleteMemoryFile, slugify, SaveMemoryInput } from "./save.js";
+export {
+  saveMemory,
+  deleteMemoryFile,
+  slugify,
+  SaveMemoryInput,
+  extractWikilinks,
+  stripAutoRelatedSection,
+  AUTO_RELATED_START,
+  AUTO_RELATED_END,
+} from "./save.js";
 export type { SaveMemoryResult, DeleteMemoryResult } from "./save.js";
 
 export {
@@ -47,4 +56,7 @@ export {
   OllamaEmbeddingProvider,
   fuseRRF,
 } from "./embeddings.js";
-export type { EmbeddingProvider, EmbeddingHit } from "./embeddings.js";
+export type { EmbeddingProvider, EmbeddingHit, EmbedListener } from "./embeddings.js";
+
+export { RelatedEnricher } from "./related-enrich.js";
+export type { RelatedEnricherOptions } from "./related-enrich.js";

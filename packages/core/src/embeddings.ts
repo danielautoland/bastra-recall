@@ -154,12 +154,18 @@ export interface EmbeddingHit {
 
 // ─── Embedding Index ─────────────────────────────────────────────
 
+/** Subscriber für „dieser Memory hat gerade ein frisches Vector bekommen" —
+ *  Auto-Related-Enricher nutzt das, um nach jedem Embed-Batch die Similar-
+ *  Suche zu triggern und `related_via` zu pflegen. */
+export type EmbedListener = (id: string) => void;
+
 export class EmbeddingIndex {
   private vectors = new Map<string, Float32Array>();
   private detach?: () => void;
   private pendingQueue: Set<string> = new Set();
   private processing = false;
   private persistTimer: NodeJS.Timeout | null = null;
+  private embedListeners = new Set<EmbedListener>();
 
   constructor(
     private readonly vault: Vault,
@@ -189,6 +195,28 @@ export class EmbeddingIndex {
       clearTimeout(this.persistTimer);
       this.persistTimer = null;
     }
+  }
+
+  /** Subscribe für post-embed events. Liefert eine `unsubscribe`-Funktion. */
+  onEmbed(listener: EmbedListener): () => void {
+    this.embedListeners.add(listener);
+    return () => this.embedListeners.delete(listener);
+  }
+
+  /** Liefert Top-k Nachbarn eines bereits embedded Memory. Nutzt das vorhandene
+   *  Vector — KEIN Provider-Call (kein Embedding-Kosten, kein Network). Wenn
+   *  das Memory noch keinen Vector hat: `null`. Self wird automatisch
+   *  herausgefiltert. */
+  findSimilarById(id: string, k: number = 5): EmbeddingHit[] | null {
+    const seed = this.vectors.get(id);
+    if (!seed) return null;
+    const hits: EmbeddingHit[] = [];
+    for (const [otherId, v] of this.vectors) {
+      if (otherId === id) continue;
+      hits.push({ id: otherId, score: cosine(seed, v) });
+    }
+    hits.sort((a, b) => b.score - a.score);
+    return hits.slice(0, k);
   }
 
   /** Liefert Top-k via Cosine-Similarity. Brute-force über alle Vectors —
@@ -315,6 +343,17 @@ export class EmbeddingIndex {
             this.vectors.set(memories[i].id, vectors[i]);
           }
           this.schedulePersist();
+          // Subscriber (z.B. RelatedEnricher) post-batch benachrichtigen.
+          // Listener-Errors dürfen den embed-Loop nie aufhalten.
+          for (const { id } of memories) {
+            for (const listener of this.embedListeners) {
+              try {
+                listener(id);
+              } catch (err) {
+                console.error("[bastra.embeddings] embed listener error:", err);
+              }
+            }
+          }
         } catch (err) {
           console.error("[bastra.embeddings] batch error, requeue:", err);
           // Bei Fehler: Items zurück in queue für Retry beim nächsten Add-Event

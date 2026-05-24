@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * nexus-recall hook CLI — bridges Claude Code's PreToolUse event into the
+ * bastra-recall hook CLI — bridges Claude Code's PreToolUse event into the
  * daemon's /hook/recall HTTP endpoint and emits a `<recall-hints>` block as
  * `additionalContext` so Claude reads it before the actual Write/Edit fires.
  *
@@ -8,7 +8,7 @@
  *   stdin (JSON Claude-Code hook payload)
  *     → filter to PreToolUse on Write/Edit/MultiEdit/NotebookEdit
  *     → detectTopics(file_path, content excerpt) → query
- *     → POST 127.0.0.1:NEXUS_HTTP_PORT/hook/recall
+ *     → POST 127.0.0.1:BASTRA_HTTP_PORT/hook/recall
  *     → format hits as <recall-hints>…</recall-hints>
  *     → stdout: {"hookSpecificOutput": { hookEventName, additionalContext }}
  *
@@ -18,14 +18,15 @@
  *   - No persistent state. No vault read. We only know the daemon URL.
  *   - Telemetry is best-effort and never blocks the response.
  */
-import { detectTopics, detectProject, extractContentExcerpt, type ToolIntent } from "@nexus-recall/core";
+import { detectTopics, detectProject, extractContentExcerpt, type ToolIntent } from "@bastra-recall/core";
 import { request } from "node:http";
 import { appendFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { envFirst, envInt } from "./env.js";
+import { defaultLogDir } from "./telemetry.js";
 
-const HOOK_TIMEOUT_MS = parseInt(process.env.NEXUS_HOOK_TIMEOUT_MS ?? "250", 10);
+const HOOK_TIMEOUT_MS = envInt("BASTRA_HOOK_TIMEOUT_MS", 250, "NEXUS_HOOK_TIMEOUT_MS");
 const DEFAULT_PORT = 6723;
 const HOOK_VERSION = "0.2.0";
 const SCORE_FLOOR = 30; // mirror SKILL.md: <30 is noise
@@ -86,7 +87,9 @@ async function main(): Promise<void> {
   const topics = detectTopics(intent);
   const project = detectProject(payload.cwd ?? process.cwd());
 
-  const url = process.env.NEXUS_HTTP_URL ?? `http://127.0.0.1:${process.env.NEXUS_HTTP_PORT ?? DEFAULT_PORT}`;
+  const httpURL = envFirst("BASTRA_HTTP_URL", "NEXUS_HTTP_URL");
+  const httpPort = envFirst("BASTRA_HTTP_PORT", "NEXUS_HTTP_PORT") ?? String(DEFAULT_PORT);
+  const url = httpURL ?? `http://127.0.0.1:${httpPort}`;
   const remainingMs = Math.max(50, HOOK_TIMEOUT_MS - (Date.now() - startedAt));
 
   // 3) Call daemon. Any failure → silent skip.
@@ -288,10 +291,9 @@ interface HookCallTelemetry {
 }
 
 async function writeTelemetry(payload: HookCallTelemetry): Promise<void> {
-  if ((process.env.NEXUS_TELEMETRY ?? "on").toLowerCase() === "off") return;
+  if ((envFirst("BASTRA_TELEMETRY", "NEXUS_TELEMETRY") ?? "on").toLowerCase() === "off") return;
   try {
-    const logDir =
-      process.env.NEXUS_LOG_PATH ?? join(homedir(), ".nexus-recall", "logs");
+    const logDir = envFirst("BASTRA_LOG_PATH", "NEXUS_LOG_PATH") ?? defaultLogDir();
     await mkdir(logDir, { recursive: true });
     const ts = new Date().toISOString();
     const event = {

@@ -10,13 +10,13 @@
  * Aggregate: Recall@1, Recall@3, MRR, and which field actually triggered
  * the match (recall_when vs title/tags/body).
  *
- * Run:  NEXUS_VAULT_PATH=/path/to/vault npx tsx scripts/eval.ts
+ * Run:  BASTRA_VAULT_PATH=/path/to/vault npx tsx scripts/eval.ts
  */
-import { Vault, SearchIndex } from "@nexus-recall/core";
+import { Vault, SearchIndex } from "@bastra-recall/core";
 
-const VAULT_PATH = process.env.NEXUS_VAULT_PATH;
+const VAULT_PATH = process.env.BASTRA_VAULT_PATH ?? process.env.NEXUS_VAULT_PATH;
 if (!VAULT_PATH) {
-  console.error("FATAL: NEXUS_VAULT_PATH not set");
+  console.error("FATAL: BASTRA_VAULT_PATH not set");
   process.exit(2);
 }
 

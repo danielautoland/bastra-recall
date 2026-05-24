@@ -20,7 +20,7 @@ A persistent teammate memory for Claude that:
                        │ chokidar file-watcher
                        ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│  nexus-recall daemon  (single TypeScript process, always running)    │
+│  bastra-recall daemon  (single TypeScript process, always running)    │
 │    - SQLite index (graph + FTS5)                                     │
 │    - stdio MCP server   ←── Claude Code, Claude Desktop              │
 │    - HTTP MCP server    ←── Claude.ai web (Custom Connector)         │
@@ -40,19 +40,19 @@ A persistent teammate memory for Claude that:
 
 ### 1. Vault layer
 
-- Path: `~/nexus-vault/` (configurable via `NEXUS_VAULT_PATH` env).
+- Path: `~/nexus-vault/` (configurable via `BASTRA_VAULT_PATH` env).
 - Format: plain `.md` files, one memory per file. YAML frontmatter, markdown body, `[[wikilinks]]` for cross-references.
 - Flat directory — no nested folders. The schema's `topic_path` provides the structuring axis.
 - The vault is **the source of truth**. The SQLite index is a derived cache — losing it must never lose data.
 
 This guarantees:
 - Daniel can edit memorys in Obsidian directly. Watcher re-indexes within ~50ms.
-- Memorys survive nexus-recall being uninstalled. They're just markdown.
+- Memorys survive bastra-recall being uninstalled. They're just markdown.
 - Cloud sync (iCloud, Dropbox, Syncthing, Git) works out of the box because it's a plain folder.
 
 ### 2. Index layer
 
-SQLite at `~/.nexus-recall/index.db`, with FTS5 enabled.
+SQLite at `~/.bastra/index.db`, with FTS5 enabled.
 
 #### Tables
 
@@ -162,13 +162,13 @@ We measure this in the Dogfood week. If recall accuracy < 70%, embeddings move i
 
 ### 3. Daemon layer
 
-A single TypeScript process (`nexus-recall serve`) running as a user-level daemon.
+A single TypeScript process (`bastra-recall serve`) running as a user-level daemon.
 
 #### Lifecycle
 
-- Mac: launched via `launchd` plist at `~/Library/LaunchAgents/com.nexus-recall.daemon.plist`. Auto-starts at login, restarts on crash.
+- Mac: launched via `launchd` plist at `~/Library/LaunchAgents/com.bastra-recall.daemon.plist`. Auto-starts at login, restarts on crash.
 - Listens on `localhost:7891` (HTTP) for web/chat surfaces.
-- Exposes stdio via a separate small wrapper binary (`nexus-recall-stdio`) that proxies stdin/stdout to a local socket — Claude Code and Desktop spawn this wrapper as their MCP server config.
+- Exposes stdio via a separate small wrapper binary (`bastra-recall-stdio`) that proxies stdin/stdout to a local socket — Claude Code and Desktop spawn this wrapper as their MCP server config.
 
 This means: **one process holds the index in memory**, every surface talks to it, no duplication.
 
@@ -234,7 +234,7 @@ The PreToolUse hook is what makes "buildin"-feel possible: I recall **before my 
 
 | Surface | Transport | Setup |
 |---|---|---|
-| Claude Code | stdio MCP via wrapper | Add to `~/.claude.json` mcpServers: `nexus-recall: { command: "nexus-recall-stdio" }` |
+| Claude Code | stdio MCP via wrapper | Add to `~/.claude.json` mcpServers: `bastra-recall: { command: "bastra-recall-stdio" }` |
 | Claude Desktop | stdio MCP via wrapper | Same wrapper, configured in Desktop's MCP settings |
 | Claude.ai (web/chat/projects) | HTTP MCP via Custom Connector | User adds a Custom Connector pointing to `http://localhost:7891/mcp`. Browser-extension or local proxy may be needed for HTTPS. |
 | Co-work | HTTP MCP | Same as above |

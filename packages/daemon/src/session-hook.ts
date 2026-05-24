@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * nexus-recall session-start hook — preloads the most relevant memorys for
+ * bastra-recall session-start hook — preloads the most relevant memorys for
  * a fresh Claude Code session as `additionalContext` so the model knows
  * who the user is, what project they're in, and what cross-project rules
  * apply, before the first user prompt arrives.
@@ -8,7 +8,7 @@
  * Pipeline:
  *   stdin (JSON Claude-Code SessionStart payload)
  *     → detectProject(cwd)
- *     → 3 scope-filtered POSTs to 127.0.0.1:NEXUS_HTTP_PORT/hook/recall
+ *     → 3 scope-filtered POSTs to 127.0.0.1:BASTRA_HTTP_PORT/hook/recall
  *         · scope=user-preference  k=3   query="session-start preferences"
  *         · scope=<project>        k=3   query="<project> active context"
  *         · scope=all-projects     k=2   query="cross-project working rules"
@@ -18,14 +18,15 @@
  * Discipline mirrors hook.ts: hard wall-clock budget, fail-silent on every
  * error path, telemetry best-effort.
  */
-import { detectProject } from "@nexus-recall/core";
+import { detectProject } from "@bastra-recall/core";
 import { request } from "node:http";
 import { appendFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { envFirst, envInt } from "./env.js";
+import { defaultLogDir } from "./telemetry.js";
 
-const HOOK_TIMEOUT_MS = parseInt(process.env.NEXUS_HOOK_TIMEOUT_MS ?? "500", 10);
+const HOOK_TIMEOUT_MS = envInt("BASTRA_HOOK_TIMEOUT_MS", 500, "NEXUS_HOOK_TIMEOUT_MS");
 const DEFAULT_PORT = 6723;
 const HOOK_VERSION = "0.2.0";
 const SCORE_FLOOR = 30;
@@ -68,8 +69,9 @@ async function main(): Promise<void> {
   if (payload.hook_event_name !== "SessionStart") return emitEmpty();
 
   const project = detectProject(payload.cwd ?? process.cwd());
-  const url =
-    process.env.NEXUS_HTTP_URL ?? `http://127.0.0.1:${process.env.NEXUS_HTTP_PORT ?? DEFAULT_PORT}`;
+  const httpURL = envFirst("BASTRA_HTTP_URL", "NEXUS_HTTP_URL");
+  const httpPort = envFirst("BASTRA_HTTP_PORT", "NEXUS_HTTP_PORT") ?? String(DEFAULT_PORT);
+  const url = httpURL ?? `http://127.0.0.1:${httpPort}`;
 
   const queries: Array<{ scope: string; query: string; k: number }> = [
     { scope: "user-preference", query: "session-start preferences active context", k: 3 },
@@ -279,10 +281,9 @@ interface SessionHookTelemetry {
 }
 
 async function writeTelemetry(payload: SessionHookTelemetry): Promise<void> {
-  if ((process.env.NEXUS_TELEMETRY ?? "on").toLowerCase() === "off") return;
+  if ((envFirst("BASTRA_TELEMETRY", "NEXUS_TELEMETRY") ?? "on").toLowerCase() === "off") return;
   try {
-    const logDir =
-      process.env.NEXUS_LOG_PATH ?? join(homedir(), ".nexus-recall", "logs");
+    const logDir = envFirst("BASTRA_LOG_PATH", "NEXUS_LOG_PATH") ?? defaultLogDir();
     await mkdir(logDir, { recursive: true });
     const ts = new Date().toISOString();
     const event = {

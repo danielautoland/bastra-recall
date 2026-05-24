@@ -71,9 +71,9 @@ The ack is short, single-line, prefixed with `→` so it's visually distinct. Da
 This is what conditions me to do the above. To be added to user-level `CLAUDE.md`:
 
 ```markdown
-## nexus-recall — autonomous memory
+## bastra-recall — autonomous memory
 
-You have a persistent memory via the `nexus-recall` MCP server. Treat it as your
+You have a persistent memory via the `bastra-recall` MCP server. Treat it as your
 own long-term memory, not a tool to be used on request.
 
 **Save autonomously** when any of the following happens in a turn:
@@ -136,7 +136,7 @@ Format rules:
 ### CLAUDE.md instruction — the recall side
 
 ```markdown
-## nexus-recall — using recall hints
+## bastra-recall — using recall hints
 
 When a `<recall-hints>` block appears in your context, it is not optional —
 it is your own memory speaking.

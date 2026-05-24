@@ -1,6 +1,6 @@
 /**
  * Document-Hub MCP-Tool-Handler. Read-only — Phase 2.1 lebt komplett hier in
- * bastra-open (OSS, MIT) und ist für jeden MCP-fähigen Coding-Agent ohne
+ * bastra-recall (OSS, MIT) und ist für jeden MCP-fähigen Coding-Agent ohne
  * Pro-Lizenz nutzbar (Triage-Repo-Split aus Issue #24).
  *
  * Schreib-Tools (`save_document`/`recategorize`/`move_document`) leben in
@@ -8,7 +8,7 @@
  */
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import type { Vault, SearchIndex } from "@nexus-recall/core";
+import type { Vault, SearchIndex } from "@bastra-recall/core";
 
 // ─── Argument schemas ───────────────────────────────────────────
 

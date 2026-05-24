@@ -1,7 +1,7 @@
 {
-  "name": "nexus-recall-monorepo",
+  "name": "bastra-recall-monorepo",
   "version": "0.1.0",
-  "description": "Workspace root for nexus-recall (bastra-open): OSS daemon, MCP server, and Claude Code skill — the open foundation under the Bastra Mac app.",
+  "description": "Workspace root for bastra-recall: OSS daemon, MCP server, and Claude Code skill — the open foundation under the Bastra Mac app.",
   "private": true,
   "license": "MIT",
   "engines": {
@@ -14,7 +14,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "check:types": "npm run check:types --workspaces --if-present",
-    "smoke": "npm run smoke --workspace=@nexus-recall/daemon",
-    "smoke:telemetry": "npm run smoke:telemetry --workspace=@nexus-recall/daemon"
+    "smoke": "npm run smoke --workspace=@bastra-recall/daemon",
+    "smoke:telemetry": "npm run smoke:telemetry --workspace=@bastra-recall/daemon"
   }
 }

@@ -1,4 +1,4 @@
-# nexus-recall — Plan v2
+# bastra-recall — Plan v2
 
 ## Vision
 
@@ -56,7 +56,7 @@ Each milestone has hard pass/fail criteria. We do not advance until the previous
 **Scope:** the daemon comes up, indexes a vault, exposes `recall` and `load_memory` over both stdio and HTTP MCP. No save yet.
 
 **Deliverables:**
-- `nexus-recall` binary with subcommands: `serve`, `stdio`, `index`, `doctor`
+- `bastra-recall` binary with subcommands: `serve`, `stdio`, `index`, `doctor`
 - Vault watcher (chokidar)
 - Initial vault populated with the six example memorys from `memory-schema.md`
 - Claude Code config snippet to wire it as MCP server
@@ -91,7 +91,7 @@ Each milestone has hard pass/fail criteria. We do not advance until the previous
 - Telemetry analysis at end of week
 
 **Pass:**
-- ≥ 1 concrete bug avoided that the user explicitly attributes to nexus-recall
+- ≥ 1 concrete bug avoided that the user explicitly attributes to bastra-recall
 - Token-overhead per prompt: median < 300 chars
 - Hook latency p95 < 100 ms
 - False-positive recall rate < 30 % (i.e. ≥ 70 % of hints with score ≥ 0.8 lead to actual `load_memory` calls)

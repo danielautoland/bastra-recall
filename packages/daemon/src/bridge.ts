@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * nexus-recall bridge — line-JSON RPC over stdio.
+ * bastra-recall bridge — line-JSON RPC over stdio.
  *
  * Designed to be spawned as a child process by the Mac-app's Tauri
  * backend. The MCP server (index.ts) is for Claude Code; this bridge
@@ -26,6 +26,7 @@ import {
   EmbeddingIndex,
   OpenAIEmbeddingProvider,
   OllamaEmbeddingProvider,
+  RelatedEnricher,
   type EmbeddingProvider,
   SaveMemoryInput,
   AuditLog,
@@ -33,7 +34,8 @@ import {
   auditedSave,
   auditedSoftDelete,
   auditedRestore,
-} from "@nexus-recall/core";
+} from "@bastra-recall/core";
+import { envFirst, envInt, envFloat, envBool } from "./env.js";
 import readline from "node:readline";
 import * as path from "node:path";
 
@@ -57,8 +59,20 @@ async function attachEmbeddings(search: SearchIndex, vault: Vault): Promise<void
   await idx.start();
   search.useEmbeddings(idx);
   process.stderr.write(
-    `[bridge] embeddings ready provider=${provider.id} (${idx.size()} vectors, ${idx.pendingSize()} pending)\n`,
+    `[bastra-recall.bridge] embeddings ready provider=${provider.id} (${idx.size()} vectors, ${idx.pendingSize()} pending)\n`,
   );
+  // Auto-Related-Enricher: pflegt frontmatter.related_via nach jedem Embed-
+  // Batch. Im Bridge-Pfad (Mac-App) gleicher Default-Status wie im MCP-Pfad.
+  if (envBool("BASTRA_AUTO_RELATED", true)) {
+    const enricher = new RelatedEnricher(vault, idx, {
+      topN: envInt("BASTRA_RELATED_TOP_N", 5),
+      threshold: envFloat("BASTRA_RELATED_THRESHOLD", 0.7),
+    });
+    enricher.start();
+    process.stderr.write(
+      `[bastra-recall.bridge] auto-related: enabled (top ${envInt("BASTRA_RELATED_TOP_N", 5)} ≥ ${envFloat("BASTRA_RELATED_THRESHOLD", 0.7)})\n`,
+    );
+  }
 }
 
 function pickEmbeddingProvider(): EmbeddingProvider | null {
@@ -66,7 +80,7 @@ function pickEmbeddingProvider(): EmbeddingProvider | null {
   const apiKey = process.env.OPENAI_API_KEY ?? process.env.BASTRA_EMBEDDING_KEY;
 
   if (requested === "none") {
-    process.stderr.write("[bridge] embeddings disabled (provider=none)\n");
+    process.stderr.write("[bastra-recall.bridge] embeddings disabled (provider=none)\n");
     return null;
   }
   if (requested === "ollama") {
@@ -75,7 +89,7 @@ function pickEmbeddingProvider(): EmbeddingProvider | null {
   if (requested === "openai") {
     if (!apiKey) {
       process.stderr.write(
-        "[bridge] embeddings disabled (provider=openai but no API key)\n",
+        "[bastra-recall.bridge] embeddings disabled (provider=openai but no API key)\n",
       );
       return null;
     }
@@ -86,7 +100,7 @@ function pickEmbeddingProvider(): EmbeddingProvider | null {
     return new OpenAIEmbeddingProvider({ apiKey });
   }
   process.stderr.write(
-    "[bridge] embeddings disabled (no BASTRA_EMBEDDING_PROVIDER, no API key)\n",
+    "[bastra-recall.bridge] embeddings disabled (no BASTRA_EMBEDDING_PROVIDER, no API key)\n",
   );
   return null;
 }
@@ -101,9 +115,9 @@ function makeOllamaProvider(): OllamaEmbeddingProvider {
   return new OllamaEmbeddingProvider({ baseURL, model, dim });
 }
 
-const VAULT_PATH = process.env.NEXUS_VAULT_PATH;
+const VAULT_PATH = envFirst("BASTRA_VAULT_PATH", "NEXUS_VAULT_PATH");
 if (!VAULT_PATH) {
-  process.stderr.write("[bridge] FATAL: NEXUS_VAULT_PATH is not set\n");
+  process.stderr.write("[bastra-recall.bridge] FATAL: BASTRA_VAULT_PATH is not set\n");
   process.exit(2);
 }
 
@@ -121,7 +135,7 @@ async function main(): Promise<void> {
   const vault = new Vault(VAULT_PATH!);
   const { loaded, skipped } = await vault.init();
   process.stderr.write(
-    `[bridge] vault loaded: ${loaded} memorys` +
+    `[bastra-recall.bridge] vault loaded: ${loaded} memorys` +
       (skipped.length ? `, ${skipped.length} skipped` : "") +
       "\n",
   );
@@ -134,7 +148,7 @@ async function main(): Promise<void> {
   // OPENAI_API_KEY wird OpenAI text-embedding-3-small aktiviert und mit
   // BM25 via RRF gefused. Sonst bleibt Recall reines BM25.
   attachEmbeddings(search, vault).catch((err) => {
-    process.stderr.write(`[bridge] embeddings attach error: ${err}\n`);
+    process.stderr.write(`[bastra-recall.bridge] embeddings attach error: ${err}\n`);
   });
 
   // Push-Channel: jedes Vault-Event geht als unsolicited Notification an die
@@ -148,7 +162,7 @@ async function main(): Promise<void> {
     }
   });
 
-  process.stderr.write("[bridge] ready\n");
+  process.stderr.write("[bastra-recall.bridge] ready\n");
 
   const rl = readline.createInterface({ input: process.stdin });
 
@@ -356,12 +370,12 @@ async function main(): Promise<void> {
   });
 
   rl.on("close", () => {
-    process.stderr.write("[bridge] stdin closed, exiting\n");
+    process.stderr.write("[bastra-recall.bridge] stdin closed, exiting\n");
     process.exit(0);
   });
 }
 
 main().catch((err) => {
-  process.stderr.write(`[bridge] FATAL: ${err}\n`);
+  process.stderr.write(`[bastra-recall.bridge] FATAL: ${err}\n`);
   process.exit(1);
 });

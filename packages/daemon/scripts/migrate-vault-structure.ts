@@ -9,16 +9,16 @@
  * top-level kind because they carry url/og_image and aren't really memories.
  *
  * Usage:
- *   NEXUS_VAULT_PATH=… npx tsx scripts/migrate-vault-structure.ts          # dry-run
- *   NEXUS_VAULT_PATH=… npx tsx scripts/migrate-vault-structure.ts --apply  # actually move
+ *   BASTRA_VAULT_PATH=… npx tsx scripts/migrate-vault-structure.ts          # dry-run
+ *   BASTRA_VAULT_PATH=… npx tsx scripts/migrate-vault-structure.ts --apply  # actually move
  */
 import { readdir, readFile, mkdir, rename, rmdir } from "node:fs/promises";
 import { join, basename } from "node:path";
 import matter from "gray-matter";
 
-const VAULT = process.env.NEXUS_VAULT_PATH;
+const VAULT = process.env.BASTRA_VAULT_PATH ?? process.env.NEXUS_VAULT_PATH;
 if (!VAULT) {
-  console.error("set NEXUS_VAULT_PATH");
+  console.error("set BASTRA_VAULT_PATH");
   process.exit(1);
 }
 const APPLY = process.argv.includes("--apply");

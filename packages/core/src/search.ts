@@ -135,7 +135,11 @@ export class SearchIndex {
       return true;
     });
 
-    const direct: RecallHit[] = filtered.slice(0, k).map((r) => ({
+    // Pool-Size für Hop-Seeds: max(k*4, 20). Multi-Hop soll Nachbarn auch
+    // für Hits sehen, die knapp unter dem k-Cut liegen — sonst gehen die
+    // related_via-Kanten der Positionen 6–20 verloren.
+    const HOP_SEED_POOL = Math.max(k * 4, 20);
+    const directFull: RecallHit[] = filtered.slice(0, HOP_SEED_POOL).map((r) => ({
       id: r.id as string,
       title: r.title as string,
       type: r.type as string,
@@ -147,9 +151,10 @@ export class SearchIndex {
       mode: "bm25" as const,
       hop: "direct" as const,
     }));
+    const direct = directFull.slice(0, k);
 
     const withHops = opts.expand_hops === 1
-      ? this.appendOneHopNeighbors(direct, opts)
+      ? [...direct, ...this.collectOneHopNeighbors(directFull, opts, new Set(direct.map((h) => h.id))).slice(0, k)]
       : direct;
     return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
   }
@@ -195,16 +200,18 @@ export class SearchIndex {
     const vectorLookup = new Map(vectorTop.map((v) => [v.hit.id, v]));
 
     const sorted = Array.from(fused.entries()).sort((a, b) => b[1] - a[1]);
-    const out: RecallHit[] = [];
+    // Größerer Pool für Hop-Seeds (siehe recall()-Kommentar).
+    const HOP_SEED_POOL = Math.max(k * 4, 20);
+    const outFull: RecallHit[] = [];
     for (const [id, fusedScore] of sorted) {
-      if (out.length >= k) break;
+      if (outFull.length >= HOP_SEED_POOL) break;
       const bm = bm25Lookup.get(id);
       const v = vectorLookup.get(id);
       const mem = v?.mem ?? this.vault.get(id);
       if (!mem) continue;
       const fm = mem.fm;
       const inBoth = bm !== undefined && v !== undefined;
-      out.push({
+      outFull.push({
         id: fm.id,
         title: fm.title,
         type: fm.type,
@@ -219,30 +226,37 @@ export class SearchIndex {
         hop: "direct" as const,
       });
     }
+    const out = outFull.slice(0, k);
     const withHops = opts.expand_hops === 1
-      ? this.appendOneHopNeighbors(out, opts)
+      ? [...out, ...this.collectOneHopNeighbors(outFull, opts, new Set(out.map((h) => h.id))).slice(0, k)]
       : out;
     return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
   }
 
   /**
-   * Multi-Hop-Expansion (#30 / #51): nimmt die direkten Hits, sammelt deren
-   * `related_via.id`-Nachbarn, filtert sie (obsolete / sensitivity / dedup
-   * gegen direct), und hängt sie mit reduziertem Score an. Score-Reduktion:
-   * `base_score * 0.5` (heuristisch — Nachbarn sollen nie über direkte
-   * Treffer ranken).
+   * Multi-Hop-Expansion (#30 / #51): sammelt `related_via.id`-Nachbarn aus
+   * den Seed-Hits (typischerweise top-20 aus dem BM25/Hybrid-Pool, nicht nur
+   * top-k — sonst gehen Nachbarn von Position 6–20 verloren), filtert sie
+   * (obsolete / scope / type / sensitivity / dedup gegen `exclude`), und
+   * liefert sie mit reduziertem Score sortiert zurück. Score-Reduktion:
+   * `seed.score * 0.5 * link.score` (heuristisch — Nachbarn sollen nie über
+   * direkte Treffer ranken). Wenn ein Nachbar mehrfach gefunden wird, gewinnt
+   * der höchste Score.
    */
-  private appendOneHopNeighbors(direct: RecallHit[], opts: RecallOptions): RecallHit[] {
-    if (direct.length === 0) return direct;
-    const seen = new Set(direct.map((h) => h.id));
-    const neighbors: RecallHit[] = [];
-    for (const hit of direct) {
-      const mem = this.vault.get(hit.id);
+  private collectOneHopNeighbors(
+    seeds: RecallHit[],
+    opts: RecallOptions,
+    exclude: Set<string>,
+  ): RecallHit[] {
+    if (seeds.length === 0) return [];
+    const best = new Map<string, RecallHit>();
+    for (const seed of seeds) {
+      const mem = this.vault.get(seed.id);
       const related = (mem?.fm as { related_via?: { id: string; reason: string; score: number }[] })
         ?.related_via;
       if (!related?.length) continue;
       for (const link of related) {
-        if (seen.has(link.id)) continue;
+        if (exclude.has(link.id)) continue;
         const neigh = this.vault.get(link.id);
         if (!neigh) continue;
         if (neigh.fm.obsolete === true) continue;
@@ -254,26 +268,24 @@ export class SearchIndex {
         ) {
           continue;
         }
-        seen.add(link.id);
-        neighbors.push({
+        const score = round(seed.score * 0.5 * link.score);
+        const prior = best.get(link.id);
+        if (prior && prior.score >= score) continue;
+        best.set(link.id, {
           id: neigh.fm.id,
           title: neigh.fm.title,
           type: neigh.fm.type,
           scope: neigh.fm.scope,
           summary: neigh.fm.summary,
           topic_path: neigh.fm.topic_path,
-          // Neighbor-Score gedeckelt unter dem Originalhit, gewichtet mit
-          // der gespeicherten Beziehungs-Confidence.
-          score: round(hit.score * 0.5 * link.score),
+          score,
           matched_terms: [],
-          mode: hit.mode,
+          mode: seed.mode,
           hop: "1-hop" as const,
         });
       }
     }
-    // Stable: direct zuerst, neighbors nach Score sortiert dahinter.
-    neighbors.sort((a, b) => b.score - a.score);
-    return [...direct, ...neighbors];
+    return Array.from(best.values()).sort((a, b) => b.score - a.score);
   }
 
   loadFull(id: string): Memory | undefined {

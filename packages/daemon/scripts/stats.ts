@@ -1,15 +1,26 @@
 /**
- * Read ~/.nexus-recall/logs/events-*.jsonl and print a summary.
+ * Read ~/.bastra/logs/events-*.jsonl (mit Legacy-Fallback auf
+ * ~/.nexus-recall/logs/) and print a summary.
  *
  * Usage:
  *   npx tsx packages/daemon/scripts/stats.ts            # all-time
  *   npx tsx packages/daemon/scripts/stats.ts --days 7   # last 7 days
  */
 import { readdir, readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-const LOG_DIR = process.env.NEXUS_LOG_PATH ?? join(homedir(), ".nexus-recall", "logs");
+function defaultLogDir(): string {
+  const next = join(homedir(), ".bastra", "logs");
+  const legacy = join(homedir(), ".nexus-recall", "logs");
+  if (existsSync(next)) return next;
+  if (existsSync(legacy)) return legacy;
+  return next;
+}
+
+const LOG_DIR =
+  process.env.BASTRA_LOG_PATH ?? process.env.NEXUS_LOG_PATH ?? defaultLogDir();
 
 const daysArg = process.argv.indexOf("--days");
 const DAYS: number | null =

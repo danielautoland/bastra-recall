@@ -20,7 +20,7 @@ It does **not** save memorys yet — that's M2. It does **not** run hooks — th
 Requires Node 20+.
 
 ```bash
-git clone https://github.com/danielautoland/bastra-recall.git
+git clone https://github.com/n0mad-ai/bastra-recall.git
 cd bastra-recall/packages/daemon
 npm install
 npm run build

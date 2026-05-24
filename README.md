@@ -94,7 +94,7 @@ The `recall_when` field is the bridge between save and recall: when saving, the 
 Pre-requisites: Node 20+, a Mac, an Obsidian vault (or any folder of `.md` files).
 
 ```bash
-git clone https://github.com/danielautoland/bastra-recall.git
+git clone https://github.com/n0mad-ai/bastra-recall.git
 cd bastra-recall/packages/daemon
 npm install
 npm run build
@@ -191,7 +191,7 @@ Public docs and code on this branch are published under the open license; privat
 
 Pre-alpha. See [PLAN.md](./PLAN.md). Issues and discussions welcome — early feedback shapes the design.
 
-Built by [@danielautoland](https://github.com/danielautoland).
+Built by [@n0mad-ai](https://github.com/n0mad-ai).
 
 ---
 
@@ -284,7 +284,7 @@ Das `recall_when`-Feld ist die Brücke zwischen Save und Recall: beim Speichern 
 Voraussetzungen: Node 20+, ein Mac, ein Obsidian-Vault (oder irgendein Ordner mit `.md`-Dateien).
 
 ```bash
-git clone https://github.com/danielautoland/bastra-recall.git
+git clone https://github.com/n0mad-ai/bastra-recall.git
 cd bastra-recall/packages/daemon
 npm install
 npm run build
@@ -381,4 +381,4 @@ Public Docs und Code auf diesem Branch laufen unter der Open License; private No
 
 Pre-Alpha. Siehe [PLAN.md](./PLAN.md). Issues und Diskussionen willkommen — frühes Feedback formt das Design.
 
-Gebaut von [@danielautoland](https://github.com/danielautoland).
+Gebaut von [@n0mad-ai](https://github.com/n0mad-ai).

@@ -1,45 +1,40 @@
 # bastra-recall
 
-## 🇬🇧 English
-
 > A persistent teammate memory for any AI assistant — across every surface.
-
-**What it is** — A long-term memory for any AI assistant or agent: Claude (Code, Desktop, Web), ChatGPT (via Custom GPT Actions), Cursor, and anything else that speaks MCP or HTTP. Whenever you correct it, state a rule, or commit to a decision, it gets saved as a small note. In your next chat — days or weeks later, in any tool — the AI pulls those notes back automatically. No more repeating yourself. Everything stays on your own Mac as plain Markdown files (Obsidian-compatible). All your AI tools share the same memory at the same time.
-
-## 🇩🇪 Deutsch
-
 > Ein persistentes Teammate-Gedächtnis für jeden AI-Assistenten — über jede Oberfläche hinweg.
-
-**Was es ist** — Ein Langzeit-Gedächtnis für jeden AI-Assistenten oder Agent: Claude (Code, Desktop, Web), ChatGPT (via Custom GPT Actions), Cursor und alles andere, was MCP oder HTTP spricht. Sobald du etwas korrigierst, eine Regel aufstellst oder eine Entscheidung triffst, wird das als kleine Notiz gespeichert. In der nächsten Sitzung — Tage oder Wochen später, in jedem Tool — holt die AI diese Notizen automatisch wieder hervor. Schluss mit ewigem Wiederholen. Alles bleibt lokal auf deinem Mac als reine Markdown-Dateien (Obsidian-kompatibel). Alle deine AI-Tools teilen sich dasselbe Gedächtnis gleichzeitig.
-
-**Status:** 🟢 Early alpha — M0 (eval) and M1 (read path) done, M2 (save path) functional, M3 reflex layer functional with two of four hooks live: `PreToolUse` (recall before each Write/Edit) and `SessionStart` (preload top memorys at session open). Distribution and multi-surface are next. See [PLAN.md](./PLAN.md).
 
 ---
 
-## Why
+## 🇬🇧 English
 
-Working with Claude over months means re-explaining the same things. CSS pitfalls Claude already learned in one project recur in the next. Stable preferences (*"give me a recommendation, not a 5-option menu"*) get forgotten between sessions. Project-specific facts get re-discovered every time.
+**What it is** — A long-term memory for any AI assistant or agent: Claude (Code, Desktop, Web), ChatGPT (via Custom GPT Actions), Cursor, and anything else that speaks MCP or HTTP. Whenever you correct it, state a rule, or commit to a decision, it gets saved as a small note. In your next chat — days or weeks later, in any tool — the AI pulls those notes back automatically. No more repeating yourself. Everything stays on your own Mac as plain Markdown files (Obsidian-compatible). All your AI tools share the same memory at the same time.
 
-Claude has memory features, but they're **passive**: a static index file at best, no proactive recall, no cross-surface continuity.
+**Status** — 🟢 Early alpha. M0 (eval) and M1 (read path) done, M2 (save path) functional, M3 reflex layer functional with two of four hooks live: `PreToolUse` (recall before each Write/Edit) and `SessionStart` (preload top memories at session open). Distribution and multi-surface are next. See [PLAN.md](./PLAN.md).
 
-The cost isn't just frustration — it's that the user ends up thinking *for* Claude. *"Wait, didn't we solve this last week?"* That's the bug.
+### Why
 
-## What bastra-recall does
+Working with an AI assistant over months means re-explaining the same things. Pitfalls it already learned in one project recur in the next. Stable preferences (*"give me a recommendation, not a 5-option menu"*) get forgotten between sessions. Project-specific facts get re-discovered every time.
+
+Most AI tools have memory features, but they're **passive**: a static index file at best, no proactive recall, no cross-surface continuity.
+
+The cost isn't just frustration — it's that the user ends up thinking *for* the AI. *"Wait, didn't we solve this last week?"* That's the bug.
+
+### What bastra-recall does
 
 A persistent memory layer that:
 
-- **Saves autonomously** — when a lesson is learned (frustration, repeated correction, durable preference, finalized decision), Claude writes it to the vault without being asked. Trigger discipline is shipped as a Claude Code Skill (see [packages/skill/SKILL.md](./packages/skill/SKILL.md)).
-- **Recalls before acting** — not only when the user prompts. The Skill instructs Claude to query the vault before writing code, before plans, and at session start; the highest-weighted search field is `recall_when`, declared at save time.
-- **Works across surfaces** — one local daemon serves Claude Code via MCP today; Claude Desktop and Claude.ai web (Custom Connector) are on the roadmap.
-- **Plain markdown, Obsidian-compatible** — the vault is a folder of `.md` files with YAML frontmatter. Edit in Obsidian, in Claude, by hand. Vaults on Google Drive / iCloud / Dropbox mounts are supported via automatic polling-mode in the file watcher.
+- **Saves autonomously** — when a lesson is learned (frustration, repeated correction, durable preference, finalized decision), the AI writes it to the vault without being asked. Trigger discipline ships as a Claude Code Skill; other clients are conditioned through their own system prompt or Custom GPT instructions.
+- **Recalls before acting** — not only when the user prompts. The AI is instructed to query the vault before writing code, before plans, and at session start. The highest-weighted search field is `recall_when`, declared at save time.
+- **Works across surfaces** — one local daemon serves all your AI tools at once: Claude Code (via MCP), Claude Desktop (via MCP), ChatGPT (via Custom GPT Actions over HTTP), Cursor, and anything else that speaks MCP or HTTP.
+- **Plain markdown, Obsidian-compatible** — the vault is a folder of `.md` files with YAML frontmatter. Edit in Obsidian, in the AI, or by hand. Vaults on Google Drive / iCloud / Dropbox mounts are supported via automatic polling-mode in the file watcher.
 
-## The single success metric
+### The single success metric
 
-> **The user doesn't have to think for Claude anymore.**
+> **The user doesn't have to think for the AI anymore.**
 
 If recurring mistakes still recur, if the user still has to re-state preferences each session — the project failed, regardless of how clean the architecture is.
 
-## How it works
+### How it works
 
 ```
 Vault (configurable, plain markdown + YAML frontmatter, Obsidian-compatible)
@@ -47,27 +42,29 @@ Vault (configurable, plain markdown + YAML frontmatter, Obsidian-compatible)
           ▼
 bastra-recall daemon (TypeScript / Node 20+, single local process)
   - In-memory BM25 index (MiniSearch) — recall_when×5, title×4, tags×3
-  - MCP tools today: recall, load_memory, save_memory
+  - Hybrid recall: BM25 + embeddings (Ollama or OpenAI) via RRF fusion
+  - Tools: recall, load_memory, save_memory, find/read/save_document
   - Save path: validates frontmatter → writes file → force-reindexes
     (so a save and a recall in the same turn are consistent)
-  - Transport: stdio MCP → Claude Code (Desktop + web on roadmap)
+  - Transport: stdio MCP + HTTP REST (for non-MCP clients)
           │
           ▼
-Claude Code Skill (packages/skill/SKILL.md)
-  - "USE PROACTIVELY when …" trigger description
-  - Carries the save/recall trigger discipline into every session
-  - Single-file install, no settings.json edits
+One daemon ↔ many AI clients
+  - Claude Code / Desktop / Cursor → via thin MCP forwarder (stdio → HTTP)
+  - ChatGPT Custom GPT, web apps, custom scripts → via REST /api/v1/*
+  - All clients share the same vault, index, telemetry stream
 ```
 
-Hooks: two reflex hooks ship with the daemon, both speaking to its loopback HTTP endpoint:
-- **`PreToolUse`** (`bastra-recall-hook`) — fires before every `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. Topic-detects from the tool intent and injects `<recall-hints>` as `additionalContext`.
-- **`SessionStart`** (`bastra-recall-session-hook`) — fires on `startup`/`resume`/`clear`/`compact`. Preloads top user-prefs + cross-project rules + project-scoped memorys as `<session-context>` so the model knows who, what, and what-not from the first prompt.
+Two reflex hooks ship with the daemon, both speaking to its loopback HTTP endpoint:
 
-`UserPromptSubmit` and `Stop` hooks remain queued for v0.5 once dogfood reveals where they'd close gaps. Telemetry (`scripts/stats.ts`) tracks per-hook latency, hint-quality, and follow-through (did the model actually `load_memory` after a hint).
+- **`PreToolUse`** (`bastra-recall-hook`) — fires before every `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. Topic-detects from the tool intent and injects `<recall-hints>` as `additionalContext`.
+- **`SessionStart`** (`bastra-recall-session-hook`) — fires on `startup`/`resume`/`clear`/`compact`. Preloads top user-prefs + cross-project rules + project-scoped memories as `<session-context>` so the AI knows who, what, and what-not from the first prompt.
+
+`UserPromptSubmit` and `Stop` hooks remain queued for v0.5 once dogfood reveals where they'd close gaps. Telemetry (`scripts/stats.ts`) tracks per-hook latency, hint-quality, and follow-through (did the AI actually `load_memory` after a hint).
 
 Details: [docs/architecture.md](./docs/architecture.md), [docs/memory-schema.md](./docs/memory-schema.md), [docs/triggers.md](./docs/triggers.md).
 
-## Memory shape
+### Memory shape
 
 Each memory is a markdown file with structured frontmatter:
 
@@ -90,11 +87,11 @@ confidence: 0.95
 ---
 ```
 
-The `recall_when` field is the bridge between save and recall: when saving, Claude declares the contexts under which future-Claude should be reminded. See [docs/memory-schema.md](./docs/memory-schema.md) for full field semantics and six example memorys covering `lesson`, `preference`, `project-fact`, `meta-working`, `decision`, `workflow`.
+The `recall_when` field is the bridge between save and recall: when saving, the AI declares the contexts under which future-sessions should be reminded. See [docs/memory-schema.md](./docs/memory-schema.md) for full field semantics and six example memories covering `lesson`, `preference`, `project-fact`, `meta-working`, `decision`, `workflow`.
 
-## Quickstart (current — manual; brew + init coming)
+### Quickstart (current — manual; brew + init coming)
 
-Pre-requisites: Node 20+, Claude Code, an Obsidian vault (or any folder for `.md` files).
+Pre-requisites: Node 20+, a Mac, an Obsidian vault (or any folder of `.md` files).
 
 ```bash
 git clone https://github.com/danielautoland/bastra-recall.git
@@ -103,7 +100,7 @@ npm install
 npm run build
 ```
 
-Add the MCP server to Claude Code (`~/.claude.json`).
+Add the MCP server to your client (`~/.claude.json` for Claude Code).
 
 **Recommended (forwarder mode — shares one daemon across all sessions):**
 
@@ -131,22 +128,22 @@ The forwarder is a thin stdio-MCP wrapper that talks to a single local HTTP daem
 }
 ```
 
-Each session spawns its own embedded daemon. Simpler but loses cross-session vault consistency on cloud-storage mounts where the file watcher lags.
+Each session spawns its own embedded daemon. Simpler, but loses cross-session vault consistency on cloud-storage mounts where the file watcher lags.
 
-Activate the Skill (save/recall trigger discipline) and the reflex hooks (PreToolUse + SessionStart):
+For Claude Code, also activate the Skill (save/recall trigger discipline) and the reflex hooks:
 
 ```bash
 bash packages/skill/install.sh        # copies SKILL.md → ~/.claude/skills/bastra-recall/
 bash packages/skill/install-hook.sh   # registers PreToolUse + SessionStart hooks in ~/.claude/settings.json
 ```
 
-Then **restart Claude Code** — Skills and hooks are read at startup. Both hooks post to `http://127.0.0.1:6723/hook/recall` (port configurable via `BASTRA_HTTP_PORT`); if no daemon is reachable they silently no-op, so an unloaded MCP server never blocks Claude.
+Then **restart your client** — Skills and hooks are read at startup. Both hooks post to `http://127.0.0.1:6723/hook/recall` (port configurable via `BASTRA_HTTP_PORT`); if no daemon is reachable they silently no-op, so an unloaded MCP server never blocks the AI.
 
 Re-run `install.sh` whenever `SKILL.md` changes; re-run `install-hook.sh` only if hook binary paths move. To remove the hooks again: `bash packages/skill/install-hook.sh --uninstall`.
 
 A Homebrew tap and `bastra-recall init` are tracked as roadmap issues.
 
-## REST API (for non-MCP clients)
+### REST API (for non-MCP clients)
 
 The daemon exposes a REST API on `http://127.0.0.1:6723/api/v1/` covering every tool the MCP server offers. This is the integration point for clients that can't speak stdio-MCP — most notably **ChatGPT Custom GPT Actions**, which call HTTPS endpoints with an OpenAPI schema.
 
@@ -168,30 +165,220 @@ Auth and CORS:
 
 To expose this API to a hosted client like ChatGPT, point a tunnel (Cloudflare Tunnel / ngrok / your own reverse proxy) at `127.0.0.1:6723` and configure the Custom GPT with the tunnel URL + your token. An OpenAPI 3.0 spec is tracked as a roadmap issue.
 
-## Roadmap
+### Roadmap
 
 Milestone-based, not phase-based. Each gate is a hard pass/fail.
 
 | Milestone | Scope | Status |
 |---|---|---|
-| **M0** | Recall-quality eval on real vault | ✅ **Done** — Recall@1 98.3%, Recall@3 100%, MRR 0.992 across 59 memorys (own-trigger baseline). BM25 + `recall_when`-boost is sufficient; embeddings deferred. |
+| **M0** | Recall-quality eval on real vault | ✅ **Done** — Recall@1 98.3%, Recall@3 100%, MRR 0.992 across 59 memories (own-trigger baseline). BM25 + `recall_when`-boost is sufficient; embeddings deferred. |
 | **M1** | Daemon + read path (`recall`, `load_memory`) | ✅ **Done** — MCP server live, watcher works on cloud-storage mounts. |
 | **M2** | Save path + autonomous-save triggers | 🟡 **Functional** — `save_memory` MCP tool live with force-reindex. Trigger discipline shipped as a Skill. False-save / missed-save metrics not yet collected. |
 | **M0.5** | Stress-test recall (paraphrased / cross-memory / anti-hallucination) | ⏳ Open — see issues. |
 | **M3** | Reflex layer: hooks for `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Functional (PreToolUse + SessionStart)** — both ship and post to daemon's `/hook/recall`. Telemetry tracks follow-through (load_memory ↔ hint correlation). `UserPromptSubmit` and `Stop` queued for v0.5 once data shows where they'd help. |
 | **Distribution** | Homebrew tap, `bastra-recall init`, npm package | ⏳ Open. |
-| **Multi-surface** | HTTP transport for Claude.ai web (Custom Connector) | ⏳ Open. |
+| **Multi-surface** | HTTP transport for Claude.ai web (Custom Connector), ChatGPT Custom GPT (OpenAPI spec) | ⏳ Open. |
 
-Out of v0: embeddings (deferred to v0.5 only if M0.5 fails), codebase indexing, multi-device sync, web UI, team-sharing, SaaS. See [PLAN.md](./PLAN.md).
+Out of v0: codebase indexing, multi-device sync, web UI, team-sharing, SaaS. See [PLAN.md](./PLAN.md).
 
-## License
+### License
 
 MIT — see [LICENSE](./LICENSE).
 
 Public docs and code on this branch are published under the open license; private notes (in `private/`, gitignored) are not.
 
-## Status & contact
+### Status & contact
 
 Pre-alpha. See [PLAN.md](./PLAN.md). Issues and discussions welcome — early feedback shapes the design.
 
 Built by [@danielautoland](https://github.com/danielautoland).
+
+---
+
+## 🇩🇪 Deutsch
+
+**Was es ist** — Ein Langzeit-Gedächtnis für jeden AI-Assistenten oder Agent: Claude (Code, Desktop, Web), ChatGPT (via Custom GPT Actions), Cursor und alles andere, was MCP oder HTTP spricht. Sobald du etwas korrigierst, eine Regel aufstellst oder eine Entscheidung triffst, wird das als kleine Notiz gespeichert. In der nächsten Sitzung — Tage oder Wochen später, in jedem Tool — holt die AI diese Notizen automatisch wieder hervor. Schluss mit ewigem Wiederholen. Alles bleibt lokal auf deinem Mac als reine Markdown-Dateien (Obsidian-kompatibel). Alle deine AI-Tools teilen sich dasselbe Gedächtnis gleichzeitig.
+
+**Status** — 🟢 Frühes Alpha. M0 (Eval) und M1 (Read-Path) fertig, M2 (Save-Path) funktional, M3 Reflex-Layer funktional mit zwei von vier Hooks live: `PreToolUse` (Recall vor jedem Write/Edit) und `SessionStart` (Top-Memories beim Sitzungsstart vorladen). Distribution und Multi-Surface kommen als Nächstes. Siehe [PLAN.md](./PLAN.md).
+
+### Warum
+
+Wenn du Monate mit einem AI-Assistenten arbeitest, erklärst du dieselben Dinge immer wieder. Stolperfallen, die er in einem Projekt schon mal gelernt hat, kommen im nächsten zurück. Stabile Vorlieben (*"gib mir eine Empfehlung, kein 5-Optionen-Menü"*) sind zwischen Sitzungen vergessen. Projekt-spezifische Fakten werden jedes Mal neu entdeckt.
+
+Die meisten AI-Tools haben zwar Memory-Features, aber die sind **passiv**: bestenfalls eine statische Index-Datei, kein proaktives Erinnern, keine Kontinuität über verschiedene Oberflächen hinweg.
+
+Der Preis ist nicht nur Frust — sondern dass am Ende der User für die AI mitdenkt. *"Moment, das hatten wir doch letzte Woche schon gelöst?"* Genau das ist der Bug.
+
+### Was bastra-recall macht
+
+Eine persistente Gedächtnis-Schicht, die:
+
+- **Autonom speichert** — wenn etwas gelernt wird (Frust, wiederholte Korrektur, dauerhafte Vorliebe, finale Entscheidung), schreibt die AI das ungefragt in den Vault. Die Trigger-Disziplin wird als Claude Code Skill ausgeliefert; andere Clients werden über ihren System-Prompt oder Custom-GPT-Instructions konditioniert.
+- **Vor dem Handeln erinnert** — nicht erst auf User-Anfrage. Die AI wird angewiesen, den Vault vor dem Code-Schreiben, vor Plänen und beim Sitzungsstart abzufragen. Das höchstgewichtete Suchfeld ist `recall_when`, das beim Speichern deklariert wird.
+- **Über alle Oberflächen hinweg funktioniert** — ein lokaler Daemon bedient alle deine AI-Tools gleichzeitig: Claude Code (via MCP), Claude Desktop (via MCP), ChatGPT (via Custom GPT Actions über HTTP), Cursor und alles weitere, was MCP oder HTTP spricht.
+- **Reines Markdown, Obsidian-kompatibel** — der Vault ist ein Ordner mit `.md`-Dateien und YAML-Frontmatter. Bearbeitbar in Obsidian, durch die AI oder per Hand. Vaults auf Google Drive / iCloud / Dropbox werden über den automatischen Polling-Modus des File-Watchers unterstützt.
+
+### Der einzige Erfolgs-Maßstab
+
+> **Der User muss nicht mehr für die AI mitdenken.**
+
+Wenn wiederkehrende Fehler weiter auftreten, wenn der User in jeder Sitzung dieselben Vorlieben wiederholen muss — dann ist das Projekt gescheitert, egal wie sauber die Architektur ist.
+
+### Wie es funktioniert
+
+```
+Vault (konfigurierbar, reines Markdown + YAML-Frontmatter, Obsidian-kompatibel)
+          │  chokidar (Auto-Polling auf Cloud-Storage-Mounts)
+          ▼
+bastra-recall Daemon (TypeScript / Node 20+, ein lokaler Prozess)
+  - In-Memory BM25-Index (MiniSearch) — recall_when×5, title×4, tags×3
+  - Hybrid Recall: BM25 + Embeddings (Ollama oder OpenAI) via RRF-Fusion
+  - Tools: recall, load_memory, save_memory, find/read/save_document
+  - Save-Path: validiert Frontmatter → schreibt Datei → erzwingt Reindex
+    (sodass save und recall im selben Turn konsistent sind)
+  - Transport: stdio-MCP + HTTP-REST (für Nicht-MCP-Clients)
+          │
+          ▼
+Ein Daemon ↔ viele AI-Clients
+  - Claude Code / Desktop / Cursor → über dünnen MCP-Forwarder (stdio → HTTP)
+  - ChatGPT Custom GPT, Web-Apps, eigene Skripte → über REST /api/v1/*
+  - Alle Clients teilen denselben Vault, Index und Telemetry-Stream
+```
+
+Zwei Reflex-Hooks liegen dem Daemon bei, beide sprechen seinen lokalen HTTP-Endpoint an:
+
+- **`PreToolUse`** (`bastra-recall-hook`) — feuert vor jedem `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. Erkennt das Thema aus dem Tool-Aufruf und injiziert `<recall-hints>` als `additionalContext`.
+- **`SessionStart`** (`bastra-recall-session-hook`) — feuert bei `startup`/`resume`/`clear`/`compact`. Lädt Top-User-Präferenzen + projektübergreifende Regeln + projekt-spezifische Memories als `<session-context>` vor, damit die AI ab dem ersten Prompt weiß: wer, was, und was-nicht.
+
+`UserPromptSubmit`- und `Stop`-Hooks bleiben in Warteschlange für v0.5 — sobald der Dogfood-Einsatz zeigt, wo sie Lücken schließen würden. Die Telemetrie (`scripts/stats.ts`) misst pro Hook Latenz, Hint-Qualität und Follow-Through (hat die AI nach einem Hint wirklich `load_memory` gemacht).
+
+Details: [docs/architecture.md](./docs/architecture.md), [docs/memory-schema.md](./docs/memory-schema.md), [docs/triggers.md](./docs/triggers.md).
+
+### Schema einer Erinnerung
+
+Jede Memory ist eine Markdown-Datei mit strukturiertem Frontmatter:
+
+```yaml
+---
+id: css-input-focus-ring-stacking
+title: "Don't stack focus styles on inputs"
+type: lesson
+summary: "Stacking ring + outline + custom :focus on nested inputs causes double focus rings. Use single :focus-visible."
+topic_path: [css, input, focus]
+tags: [css, input, focus-ring, ui-bug]
+scope: all-projects
+recall_when:
+  - creating new input component
+  - writing input or form css
+  - focus or accessibility styling
+related: [css-effects-stacking-antipattern]
+source: "carnexus, recurring lesson"
+confidence: 0.95
+---
+```
+
+Das `recall_when`-Feld ist die Brücke zwischen Save und Recall: beim Speichern deklariert die AI die Kontexte, in denen die spätere Sitzung daran erinnert werden soll. Siehe [docs/memory-schema.md](./docs/memory-schema.md) für die vollständige Feld-Semantik und sechs Beispiel-Memories für `lesson`, `preference`, `project-fact`, `meta-working`, `decision`, `workflow`.
+
+### Schnellstart (aktuell — manuell; brew + init folgen)
+
+Voraussetzungen: Node 20+, ein Mac, ein Obsidian-Vault (oder irgendein Ordner mit `.md`-Dateien).
+
+```bash
+git clone https://github.com/danielautoland/bastra-recall.git
+cd bastra-recall/packages/daemon
+npm install
+npm run build
+```
+
+MCP-Server beim Client eintragen (für Claude Code: `~/.claude.json`).
+
+**Empfohlen (Forwarder-Modus — ein Daemon für alle Sitzungen):**
+
+```json
+"bastra-recall": {
+  "command": "node",
+  "args": ["/abs/path/to/bastra-recall/packages/daemon/dist/mcp-forwarder.js"],
+  "env": {
+    "BASTRA_VAULT_PATH": "/abs/path/to/your/vault/memorys"
+  }
+}
+```
+
+Der Forwarder ist ein dünner stdio-MCP-Wrapper, der mit einem einzigen lokalen HTTP-Daemon spricht (Standard-Port 6723). Alle MCP-Clients — Claude Code, Claude Desktop, Cursor, weitere Sitzungen — teilen sich denselben Vault-State, Embedding-Index und Telemetry-Stream. Der Forwarder spawnt den Daemon beim ersten Start automatisch, falls noch keiner läuft.
+
+**Standalone-Modus (nur ein MCP-Client, kein Sharing):**
+
+```json
+"bastra-recall": {
+  "command": "node",
+  "args": ["/abs/path/to/bastra-recall/packages/daemon/dist/index.js"],
+  "env": {
+    "BASTRA_VAULT_PATH": "/abs/path/to/your/vault/memorys"
+  }
+}
+```
+
+Jede Sitzung spawnt ihren eigenen embedded Daemon. Einfacher, aber Cross-Session-Vault-Konsistenz geht auf Cloud-Storage-Mounts mit lahmen File-Watcher verloren.
+
+Für Claude Code zusätzlich Skill (Save/Recall-Trigger-Disziplin) und Reflex-Hooks aktivieren:
+
+```bash
+bash packages/skill/install.sh        # kopiert SKILL.md → ~/.claude/skills/bastra-recall/
+bash packages/skill/install-hook.sh   # registriert PreToolUse + SessionStart-Hooks in ~/.claude/settings.json
+```
+
+Dann **Client neu starten** — Skills und Hooks werden beim Start gelesen. Beide Hooks posten an `http://127.0.0.1:6723/hook/recall` (Port konfigurierbar via `BASTRA_HTTP_PORT`); wenn kein Daemon erreichbar ist, geben sie still auf — ein nicht-geladener MCP-Server blockiert die AI also niemals.
+
+`install.sh` neu ausführen, wenn sich `SKILL.md` ändert; `install-hook.sh` nur, wenn sich Hook-Binärpfade verschieben. Hooks wieder entfernen: `bash packages/skill/install-hook.sh --uninstall`.
+
+Ein Homebrew-Tap und ein `bastra-recall init`-Befehl sind als Roadmap-Issues geführt.
+
+### REST API (für Nicht-MCP-Clients)
+
+Der Daemon exponiert eine REST-API unter `http://127.0.0.1:6723/api/v1/`, die alle Tools des MCP-Servers abdeckt. Das ist der Integrationspunkt für Clients, die kein stdio-MCP sprechen können — allen voran **ChatGPT Custom GPT Actions**, die HTTPS-Endpoints mit OpenAPI-Schema aufrufen.
+
+Endpoints (alle `POST`, JSON-Body):
+
+| Endpoint | Tool |
+|---|---|
+| `/api/v1/recall` | recall |
+| `/api/v1/load_memory` | load_memory |
+| `/api/v1/save_memory` | save_memory |
+| `/api/v1/find_document` / `read_document` / `open_document` | Document-Suche |
+| `/api/v1/save_document` / `recategorize_document` / `move_document` | Document-Schreiben (Pro) |
+
+Auth und CORS:
+
+- Wenn `BASTRA_API_TOKEN` gesetzt ist, verlangt der Daemon `Authorization: Bearer <token>` bei jedem `/api/v1/*`-Aufruf.
+- Loopback-Aufrufer (`127.0.0.1`) umgehen die Auth per Default. Mit `BASTRA_AUTH_LOOPBACK_SKIP=0` wird das Token auch lokal verlangt.
+- CORS ist per Default permissiv (`Access-Control-Allow-Origin: *`). Einschränken mit `BASTRA_CORS_ORIGIN=https://dein.host`.
+
+Um die API für einen gehosteten Client wie ChatGPT verfügbar zu machen: einen Tunnel (Cloudflare Tunnel / ngrok / eigener Reverse-Proxy) auf `127.0.0.1:6723` legen und im Custom GPT die Tunnel-URL + dein Token konfigurieren. Eine OpenAPI 3.0-Spec ist als Roadmap-Issue gelistet.
+
+### Roadmap
+
+Milestone-basiert, nicht Phasen-basiert. Jedes Gate ist hartes Pass/Fail.
+
+| Milestone | Scope | Status |
+|---|---|---|
+| **M0** | Recall-Qualität auf echtem Vault evaluieren | ✅ **Fertig** — Recall@1 98.3%, Recall@3 100%, MRR 0.992 über 59 Memories (Own-Trigger-Baseline). BM25 + `recall_when`-Boost reicht; Embeddings zurückgestellt. |
+| **M1** | Daemon + Read-Path (`recall`, `load_memory`) | ✅ **Fertig** — MCP-Server live, Watcher funktioniert auf Cloud-Storage-Mounts. |
+| **M2** | Save-Path + autonome Save-Trigger | 🟡 **Funktional** — `save_memory` MCP-Tool live mit Force-Reindex. Trigger-Disziplin als Skill ausgeliefert. False-Save- / Missed-Save-Metriken noch nicht erhoben. |
+| **M0.5** | Stresstest für Recall (paraphrasiert / cross-memory / anti-halluzination) | ⏳ Offen — siehe Issues. |
+| **M3** | Reflex-Layer: Hooks für `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Funktional (PreToolUse + SessionStart)** — beide ausgeliefert, beide posten an den `/hook/recall` des Daemons. Telemetrie misst Follow-Through (load_memory ↔ Hint-Korrelation). `UserPromptSubmit` und `Stop` warten auf v0.5, sobald Daten zeigen wo sie helfen. |
+| **Distribution** | Homebrew-Tap, `bastra-recall init`, npm-Package | ⏳ Offen. |
+| **Multi-Surface** | HTTP-Transport für Claude.ai Web (Custom Connector), ChatGPT Custom GPT (OpenAPI-Spec) | ⏳ Offen. |
+
+Außerhalb von v0: Codebase-Indexing, Multi-Device-Sync, Web-UI, Team-Sharing, SaaS. Siehe [PLAN.md](./PLAN.md).
+
+### Lizenz
+
+MIT — siehe [LICENSE](./LICENSE).
+
+Public Docs und Code auf diesem Branch laufen unter der Open License; private Notizen (in `private/`, gitignored) nicht.
+
+### Status & Kontakt
+
+Pre-Alpha. Siehe [PLAN.md](./PLAN.md). Issues und Diskussionen willkommen — frühes Feedback formt das Design.
+
+Gebaut von [@danielautoland](https://github.com/danielautoland).

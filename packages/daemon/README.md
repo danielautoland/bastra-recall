@@ -62,6 +62,20 @@ Claude should call `recall("scrollbar")` (visible in the tool-call sidebar) and 
 
 If it doesn't call recall on its own, your CLAUDE.md isn't conditioning it — see [triggers.md](../../docs/triggers.md) for the instruction text.
 
+### Daemon process check
+
+Don't grep for `daemon/dist/index.js` — the daemon is often launched with a
+relative path (`node dist/index.js`) and won't match. Use the port instead:
+
+```bash
+lsof -i :6723 -P -n      # who owns the daemon port
+curl -sS http://127.0.0.1:6723/health
+```
+
+Exactly one PID should be listed. Two means a stale daemon is running in
+parallel — the HTTP port goes to whichever bound first, and the loser
+exits silently (see http.ts EADDRINUSE handler).
+
 ## Dev workflow (in this sandbox or locally)
 
 ```bash

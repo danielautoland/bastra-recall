@@ -37,9 +37,10 @@ export const RecallArgs = z.object({
    * Multi-Hop-Recall (#30 / #51). Default `0`. Bei `1` liefert der Server
    * zusätzlich zu den direkten Treffern deren 1-Hop-Nachbarn (Memories,
    * die per `related_via` verbunden sind), mit reduziertem Score und
-   * `hop: "1-hop"` im Result.
+   * `hop: "1-hop"` im Result. Höhere Hop-Tiefen werden aktuell nicht
+   * unterstützt — der Wert ist auf 0 oder 1 begrenzt.
    */
-  expand_hops: z.union([z.literal(0), z.literal(1)]).optional(),
+  expand_hops: z.number().int().min(0).max(1).optional(),
 });
 
 export const LoadMemoryArgs = z.object({
@@ -74,7 +75,7 @@ export async function recallHandler(
     scope: parsed.data.scope,
     type: parsed.data.type,
     allow_private: parsed.data.allow_private ?? false,
-    expand_hops: parsed.data.expand_hops,
+    expand_hops: parsed.data.expand_hops as 0 | 1 | undefined,
   };
   const hits = deps.search.hasEmbeddings()
     ? await deps.search.recallHybrid(parsed.data.query, recallOpts)

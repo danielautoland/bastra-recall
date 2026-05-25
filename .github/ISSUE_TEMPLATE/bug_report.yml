@@ -1,0 +1,93 @@
+name: 🐛 Bug report
+description: Something is broken or behaves unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. A few details up front will save us
+        a round of "what version are you on?" — please fill in what you can.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: One or two sentences. What did you do, what did you expect, what did you get?
+      placeholder: |
+        I ran `bastra doctor` after installing for claude-code and it reported the daemon
+        as unreachable, but the daemon was actually running on port 6723.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Minimal steps. Skip if obvious.
+      placeholder: |
+        1. `brew install n0mad-ai/tap/bastra-recall`
+        2. `bastra install claude-code`
+        3. `bastra doctor`
+    validations:
+      required: false
+
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: Output of `bastra doctor`
+      description: Paste the full output. Redact any path you don't want public.
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Which AI client is affected?
+      options:
+        - claude-code
+        - claude-desktop
+        - cursor
+        - ChatGPT (Custom GPT via REST)
+        - other / multiple
+        - not surface-specific
+    validations:
+      required: true
+
+  - type: input
+    id: bastra-version
+    attributes:
+      label: bastra-recall version
+      description: Output of `bastra --version` (or commit hash if from source)
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS + version
+      placeholder: "macOS 15.2 (Apple Silicon)"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version
+      description: Output of `node --version`
+      placeholder: "v22.10.0"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Daemon logs live at `/tmp/bastra-daemon.{out,err}`.
+        Hook events live at `~/.bastra/logs/events-YYYY-MM-DD.jsonl`.
+        Paste only the relevant chunk, please.
+      render: shell
+    validations:
+      required: false

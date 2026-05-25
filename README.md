@@ -3,6 +3,14 @@
 > A persistent teammate memory for any AI assistant — across every surface.
 > Ein persistentes Teammate-Gedächtnis für jeden AI-Assistenten — über jede Oberfläche hinweg.
 
+[![License: MIT](https://img.shields.io/github/license/n0mad-ai/bastra-recall?color=blue)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/n0mad-ai/bastra-recall?style=flat&color=yellow)](https://github.com/n0mad-ai/bastra-recall/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/n0mad-ai/bastra-recall)](https://github.com/n0mad-ai/bastra-recall/issues)
+[![Last commit](https://img.shields.io/github/last-commit/n0mad-ai/bastra-recall)](https://github.com/n0mad-ai/bastra-recall/commits/main)
+[![TypeScript](https://img.shields.io/badge/built%20with-TypeScript-3178c6)](https://www.typescriptlang.org/)
+[![MCP](https://img.shields.io/badge/MCP-compatible-orange)](https://modelcontextprotocol.io/)
+[![Sponsor](https://img.shields.io/github/sponsors/n0mad-ai?label=sponsor&color=ea4aaa&logo=github)](https://github.com/sponsors/n0mad-ai)
+
 ---
 
 ## 🇬🇧 English

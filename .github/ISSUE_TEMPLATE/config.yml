@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Question or discussion
+    url: https://github.com/n0mad-ai/bastra-recall/discussions
+    about: For "how do I…", "should bastra do X?", or general questions, please use Discussions.
+  - name: 💖 Sponsor the project
+    url: https://github.com/sponsors/n0mad-ai
+    about: Help Bastra ship faster — every sponsor is credited in SUPPORTERS.md.

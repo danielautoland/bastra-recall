@@ -1,0 +1,59 @@
+name: 💡 Feature request
+description: Suggest a new capability or surface
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests that describe a **problem** convert better than ones that
+        prescribe a **solution**. Tell us the friction; we'll figure out the shape.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: One or two sentences. What's the friction in your workflow today?
+      placeholder: |
+        I use Bastra with both Claude Code and Cursor, but I want different recall
+        thresholds per surface — Cursor is noisier and needs a tighter filter.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution (optional)
+      description: If you have a concrete idea, sketch it. If not, leave blank.
+      placeholder: |
+        Maybe a per-surface config in `~/.bastra/config.json`?
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: What workarounds have you tried? What's wrong with them?
+      placeholder: |
+        I currently maintain two vaults — works but is a hassle.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Which part of Bastra would this touch?
+      options:
+        - Daemon / MCP server
+        - REST API
+        - CLI (`bastra install/uninstall/doctor/update`)
+        - Skill / hooks
+        - New AI-client adapter
+        - Recall quality / search
+        - Save path / triggers
+        - Docs
+        - Distribution (brew, npm, installer)
+        - Not sure
+    validations:
+      required: true

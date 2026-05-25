@@ -205,7 +205,9 @@ Milestone-based, not phase-based. Each gate is a hard pass/fail.
 | **Distribution** | Homebrew tap, `bastra-recall init`, npm package | ⏳ Open. |
 | **Multi-surface** | HTTP transport for Claude.ai web (Custom Connector), ChatGPT Custom GPT (OpenAPI spec) | ⏳ Open. |
 
-Out of v0: codebase indexing, multi-device sync, web UI, team-sharing, SaaS. See [PLAN.md](./PLAN.md).
+Out of v0 for the OSS bridge: **codebase indexing**. See [PLAN.md](./PLAN.md).
+
+A browser-based memory UI is not on the roadmap — Obsidian already does that better. Paid Bastra Personal/Pro/Studio cover multi-device sync, team-shared vaults, and hosted/SaaS — tracked in the private `bastra-pro` repo, not here.
 
 ### License
 
@@ -421,7 +423,9 @@ Milestone-basiert, nicht Phasen-basiert. Jedes Gate ist hartes Pass/Fail.
 | **Distribution** | Homebrew-Tap, `bastra-recall init`, npm-Package | ⏳ Offen. |
 | **Multi-Surface** | HTTP-Transport für Claude.ai Web (Custom Connector), ChatGPT Custom GPT (OpenAPI-Spec) | ⏳ Offen. |
 
-Außerhalb von v0: Codebase-Indexing, Multi-Device-Sync, Web-UI, Team-Sharing, SaaS. Siehe [PLAN.md](./PLAN.md).
+Außerhalb von v0 für die OSS-Bridge: **Codebase-Indexing**. Siehe [PLAN.md](./PLAN.md).
+
+Ein Browser-basiertes Memory-UI gehört nicht auf die Roadmap — Obsidian macht das bereits besser. Multi-Device-Sync, geteilte Team-Vaults und Hosting/SaaS sind paid-Features in Bastra Personal/Pro/Studio und werden im privaten `bastra-pro`-Repo verfolgt, nicht hier.
 
 ### Lizenz
 

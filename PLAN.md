@@ -106,8 +106,6 @@ Listed not to forget, but to make clear they're explicitly *not* in M0–M3:
 - Embeddings (semantic recall) — only if M0 fails or M3 reveals miss patterns
 - Codebase indexing (AST, topology, service-caller graphs) — separate project track
 - Multi-Mac / multi-device sync — vault is a folder, defer to user's choice (iCloud / Dropbox / Git)
-- Web UI — Obsidian *is* the UI for humans
-- Team-sharing / SaaS / hosted tier — only after solo dogfood (≥ 1 month) proves value
 - Plugin-marketplace bundling — config-snippet works for v0 ergonomics
 - Schema migration via LLM — ten of Daniel's own existing memorys, hand-migrated, suffice
 

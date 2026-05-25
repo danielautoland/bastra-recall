@@ -91,7 +91,7 @@ The `recall_when` field is the bridge between save and recall: when saving, the 
 
 ### Install
 
-Three paths, in order of friction. Bastra Bridge (the OSS package) is feature-complete for vault operations on its own — the paid Bastra Personal/Pro/Studio Mac app is an optional UI layer on top, not a backend dependency.
+Three paths, in order of friction. bastra-recall is self-contained: the daemon, the MCP server, the REST gateway, the `bastra` CLI, and the Skill all ship in this repo — nothing else needed for full vault functionality.
 
 #### A) One double-click — easiest, for non-coders (rolling out)
 
@@ -205,9 +205,9 @@ Milestone-based, not phase-based. Each gate is a hard pass/fail.
 | **Distribution** | Homebrew tap, `bastra-recall init`, npm package | ⏳ Open. |
 | **Multi-surface** | HTTP transport for Claude.ai web (Custom Connector), ChatGPT Custom GPT (OpenAPI spec) | ⏳ Open. |
 
-Out of v0 for the OSS bridge: **codebase indexing**. See [PLAN.md](./PLAN.md).
+Out of v0: **codebase indexing**, **multi-device sync**. See [PLAN.md](./PLAN.md).
 
-A browser-based memory UI is not on the roadmap — Obsidian already does that better. Paid Bastra Personal/Pro/Studio cover multi-device sync, team-shared vaults, and hosted/SaaS — tracked in the private `bastra-pro` repo, not here.
+Multi-device today works via the OS-level sync of the vault folder (iCloud / Google Drive / Dropbox / Git) — the file watcher's polling mode handles the latency. A browser-based UI is not planned — Obsidian already provides a great Markdown editor for the vault.
 
 ### License
 
@@ -309,7 +309,7 @@ Das `recall_when`-Feld ist die Brücke zwischen Save und Recall: beim Speichern 
 
 ### Installation
 
-Drei Wege, nach Aufwand sortiert. Bastra Bridge (das OSS-Paket) ist eigenständig vollständig für alle Vault-Operationen — die paid Bastra Personal/Pro/Studio Mac-App ist optionaler UI-Layer obendrauf, kein Backend.
+Drei Wege, nach Aufwand sortiert. bastra-recall ist eigenständig: Daemon, MCP-Server, REST-Gateway, `bastra`-CLI und Skill liegen alle in diesem Repo — mehr braucht es nicht für die volle Vault-Funktionalität.
 
 #### A) Ein Doppelklick — am einfachsten, für Nicht-Coder (Rollout läuft)
 
@@ -423,9 +423,9 @@ Milestone-basiert, nicht Phasen-basiert. Jedes Gate ist hartes Pass/Fail.
 | **Distribution** | Homebrew-Tap, `bastra-recall init`, npm-Package | ⏳ Offen. |
 | **Multi-Surface** | HTTP-Transport für Claude.ai Web (Custom Connector), ChatGPT Custom GPT (OpenAPI-Spec) | ⏳ Offen. |
 
-Außerhalb von v0 für die OSS-Bridge: **Codebase-Indexing**. Siehe [PLAN.md](./PLAN.md).
+Außerhalb von v0: **Codebase-Indexing**, **Multi-Device-Sync**. Siehe [PLAN.md](./PLAN.md).
 
-Ein Browser-basiertes Memory-UI gehört nicht auf die Roadmap — Obsidian macht das bereits besser. Multi-Device-Sync, geteilte Team-Vaults und Hosting/SaaS sind paid-Features in Bastra Personal/Pro/Studio und werden im privaten `bastra-pro`-Repo verfolgt, nicht hier.
+Multi-Device funktioniert heute über OS-Level-Sync des Vault-Ordners (iCloud / Google Drive / Dropbox / Git) — der Polling-Modus des File-Watchers gleicht die Latenz aus. Ein Browser-basiertes UI ist nicht geplant — Obsidian liefert bereits einen sehr guten Markdown-Editor für den Vault.
 
 ### Lizenz
 

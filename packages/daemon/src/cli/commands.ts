@@ -1,3 +1,5 @@
+import process from "process";
+export { cmdStatus } from "./status.js"; // 👈 앞에 export 를 붙여서 외부(cli.ts)로 내보내 줍니다!
 import { ADAPTERS, resolveTargets } from "./registry.js";
 import { VERSION, formatStatus } from "./helpers.js";
 import type { InstallOpts, ParsedArgs } from "./types.js";

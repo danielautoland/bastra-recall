@@ -13,6 +13,7 @@ import {
   cmdDoctor,
   cmdInstall,
   cmdUninstall,
+  cmdStatus,
   parseArgs,
   showHelp,
   showVersion,
@@ -32,6 +33,10 @@ async function main(): Promise<number> {
     case "uninstall": return cmdUninstall(args);
     case "doctor": return cmdDoctor(args);
     case "update": return cmdUpdate(args);
+    case "status": {
+      const rc = await cmdStatus({ json: (args as any).json, quiet: (args as any).quiet });
+      return rc;
+    }
     default:
       process.stderr.write(`error: unknown command '${args.command}' — run 'bastra help'\n`);
       return 2;

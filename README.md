@@ -2,7 +2,7 @@
   <img src="./assets/logo.png" alt="Bastra logo" width="120" />
 </p>
 
-# bastra-recall
+# Bastra.Recall
 
 > A persistent teammate memory for any AI assistant — across every surface.
 > Ein persistentes Teammate-Gedächtnis für jeden AI-Assistenten — über jede Oberfläche hinweg.

@@ -4,7 +4,7 @@
  *
  * One command, every MCP-capable client: the user installs once and bastra-recall
  * is reachable from Claude Code, Claude Desktop, Cursor, etc. See vision in
- * bastra-open#7 + memory `bastra-vision-universal-cross-surface-memory-onboarding`.
+ * bastra-recall#7 + memory `bastra-vision-universal-cross-surface-memory-onboarding`.
  *
  * Step 1 (this file): skeleton — argument parsing, subcommand dispatch, help,
  *   adapter registry, stubs for every surface.

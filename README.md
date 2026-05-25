@@ -89,7 +89,7 @@ confidence: 0.95
 
 The `recall_when` field is the bridge between save and recall: when saving, the AI declares the contexts under which future-sessions should be reminded. See [docs/memory-schema.md](./docs/memory-schema.md) for full field semantics and six example memories covering `lesson`, `preference`, `project-fact`, `meta-working`, `decision`, `workflow`.
 
-### Quickstart (current — manual; brew + init coming)
+### Quickstart
 
 Pre-requisites: Node 20+, a Mac, an Obsidian vault (or any folder of `.md` files).
 
@@ -100,7 +100,32 @@ npm install
 npm run build
 ```
 
-Add the MCP server to your client (`~/.claude.json` for Claude Code).
+#### One-command install (recommended)
+
+A `bastra` CLI ships with the daemon. It registers the MCP server with each client's config, backs the file up first, and is idempotent on re-run.
+
+```bash
+node dist/cli.js install claude-desktop      # works today
+node dist/cli.js install all --dry-run       # preview every supported surface
+node dist/cli.js doctor                      # check status of all surfaces
+node dist/cli.js uninstall claude-desktop    # reverse the install
+```
+
+Adapter status:
+
+| Surface | Status |
+|---|---|
+| `claude-desktop` | ✅ implemented (idempotent, atomic write, automatic backup) |
+| `claude-code` | 🟡 skeleton stub — coming next |
+| `cursor` | 🟡 skeleton stub — coming next |
+
+The vault path is resolved in this order: `--vault <path>` flag → `BASTRA_VAULT_PATH` env → auto-detect from an existing registration in `~/.claude.json` or `claude_desktop_config.json`. The CLI bails with a clear message if none of those work.
+
+Once `brew install bastra` ships (roadmap, [#3](https://github.com/n0mad-ai/bastra-recall/issues/3)), the call simplifies to `bastra install claude-desktop`. Until then, run via `node dist/cli.js …` from the cloned repo.
+
+#### Manual install (current alternative for the other surfaces)
+
+Add the MCP server block to your client's config (`~/.claude.json` for Claude Code, `~/Library/Application Support/Claude/claude_desktop_config.json` for Claude Desktop).
 
 **Recommended (forwarder mode — shares one daemon across all sessions):**
 
@@ -279,7 +304,7 @@ confidence: 0.95
 
 Das `recall_when`-Feld ist die Brücke zwischen Save und Recall: beim Speichern deklariert die AI die Kontexte, in denen die spätere Sitzung daran erinnert werden soll. Siehe [docs/memory-schema.md](./docs/memory-schema.md) für die vollständige Feld-Semantik und sechs Beispiel-Memories für `lesson`, `preference`, `project-fact`, `meta-working`, `decision`, `workflow`.
 
-### Schnellstart (aktuell — manuell; brew + init folgen)
+### Schnellstart
 
 Voraussetzungen: Node 20+, ein Mac, ein Obsidian-Vault (oder irgendein Ordner mit `.md`-Dateien).
 
@@ -290,7 +315,32 @@ npm install
 npm run build
 ```
 
-MCP-Server beim Client eintragen (für Claude Code: `~/.claude.json`).
+#### Ein-Befehl-Installation (empfohlen)
+
+Mit dem Daemon kommt eine `bastra`-CLI mit. Sie trägt den MCP-Server in die Config des jeweiligen Clients ein, legt vorher ein Backup an und ist bei mehrfachem Aufruf idempotent.
+
+```bash
+node dist/cli.js install claude-desktop      # funktioniert heute
+node dist/cli.js install all --dry-run       # Vorschau für alle unterstützten Surfaces
+node dist/cli.js doctor                      # Status aller Surfaces prüfen
+node dist/cli.js uninstall claude-desktop    # Installation rückgängig machen
+```
+
+Adapter-Status:
+
+| Surface | Status |
+|---|---|
+| `claude-desktop` | ✅ implementiert (idempotent, atomarer Write, automatisches Backup) |
+| `claude-code` | 🟡 Skelett-Stub — folgt als Nächstes |
+| `cursor` | 🟡 Skelett-Stub — folgt als Nächstes |
+
+Der Vault-Pfad wird in dieser Reihenfolge aufgelöst: `--vault <pfad>`-Flag → `BASTRA_VAULT_PATH`-ENV → Auto-Detect aus einer bestehenden Registrierung in `~/.claude.json` oder `claude_desktop_config.json`. Wenn keines davon greift, bricht die CLI mit einer klaren Meldung ab.
+
+Sobald `brew install bastra` ausgeliefert ist (Roadmap, [#3](https://github.com/n0mad-ai/bastra-recall/issues/3)), verkürzt sich der Aufruf zu `bastra install claude-desktop`. Bis dahin via `node dist/cli.js …` aus dem geklonten Repo.
+
+#### Manuelle Installation (aktuelle Alternative für die übrigen Surfaces)
+
+MCP-Server-Block in die Client-Config eintragen (für Claude Code: `~/.claude.json`, für Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`).
 
 **Empfohlen (Forwarder-Modus — ein Daemon für alle Sitzungen):**
 

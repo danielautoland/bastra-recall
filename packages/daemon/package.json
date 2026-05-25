@@ -9,6 +9,7 @@
     "node": ">=20"
   },
   "bin": {
+    "bastra": "./dist/cli.js",
     "bastra-recall": "./dist/index.js",
     "bastra-recall-mcp": "./dist/mcp-forwarder.js",
     "bastra-recall-bridge": "./dist/bridge.js",
@@ -18,7 +19,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc && chmod +x dist/index.js dist/mcp-forwarder.js dist/bridge.js dist/hook.js dist/session-hook.js",
+    "build": "tsc && chmod +x dist/index.js dist/mcp-forwarder.js dist/bridge.js dist/hook.js dist/session-hook.js dist/cli.js",
     "start": "node dist/index.js",
     "check:types": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",

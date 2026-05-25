@@ -89,43 +89,50 @@ confidence: 0.95
 
 The `recall_when` field is the bridge between save and recall: when saving, the AI declares the contexts under which future-sessions should be reminded. See [docs/memory-schema.md](./docs/memory-schema.md) for full field semantics and six example memories covering `lesson`, `preference`, `project-fact`, `meta-working`, `decision`, `workflow`.
 
-### Quickstart
+### Install
 
-Pre-requisites: Node 20+, a Mac, an Obsidian vault (or any folder of `.md` files).
+Three paths, in order of friction. Bastra Bridge (the OSS package) is feature-complete for vault operations on its own — the paid Bastra Personal/Pro/Studio Mac app is an optional UI layer on top, not a backend dependency.
+
+#### A) One double-click — easiest, for non-coders (rolling out)
+
+1. Download **Install Bastra.command** from the latest GitHub release.
+2. Double-click it in Finder.
+3. Done. Restart Claude Code / Claude Desktop / Cursor.
+
+The script installs Homebrew if it's missing, adds the bastra tap, installs `bastra-recall`, and runs `bastra install all` — no terminal knowledge required.
+
+> **Status (today):** `distribution/Install Bastra.command` is ready in this repo. The Homebrew tap (`n0mad-ai/homebrew-tap`) it relies on is published as soon as [#3](https://github.com/n0mad-ai/bastra-recall/issues/3) closes. Until then, use path B.
+
+#### B) One command — for developers
+
+Pre-requisites: Node 20+, Git.
 
 ```bash
 git clone https://github.com/n0mad-ai/bastra-recall.git
 cd bastra-recall/packages/daemon
 npm install
 npm run build
-```
 
-#### One-command install (recommended)
-
-A `bastra` CLI ships with the daemon. It registers the MCP server with each client's config, backs the file up first, and is idempotent on re-run.
-
-```bash
-node dist/cli.js install claude-desktop      # works today
-node dist/cli.js install all --dry-run       # preview every supported surface
-node dist/cli.js doctor                      # check status of all surfaces
-node dist/cli.js uninstall claude-desktop    # reverse the install
+node dist/cli.js install all       # registers with every supported AI client
+node dist/cli.js doctor            # check status everywhere
+node dist/cli.js uninstall all     # reverse everything
 ```
 
 Adapter status:
 
-| Surface | Status |
-|---|---|
-| `claude-desktop` | ✅ implemented (idempotent, atomic write, automatic backup) |
-| `claude-code` | 🟡 skeleton stub — coming next |
-| `cursor` | 🟡 skeleton stub — coming next |
+| Surface | What gets installed | Status |
+|---|---|---|
+| `claude-desktop` | MCP server entry in `claude_desktop_config.json` | ✅ implemented |
+| `claude-code` | MCP server in `.claude.json` + Skill in `.claude/skills/` + PreToolUse & SessionStart hooks in `.claude/settings.json` | ✅ implemented |
+| `cursor` | MCP server entry in `.cursor/mcp.json` | ✅ implemented (Cursor Rules layer is a separate roadmap item) |
 
-The vault path is resolved in this order: `--vault <path>` flag → `BASTRA_VAULT_PATH` env → auto-detect from an existing registration in `~/.claude.json` or `claude_desktop_config.json`. The CLI bails with a clear message if none of those work.
+Every write is **idempotent** (re-runs are no-ops), **atomic** (tmp file + rename), **backed up** (timestamped `.bak-…` next to the original), and **parse-safe** (broken JSON aborts the run instead of corrupting it). Vault path resolves in this order: `--vault <path>` flag → `BASTRA_VAULT_PATH` env → auto-detect from an existing registration in `~/.claude.json` or `claude_desktop_config.json`. The CLI bails with a clear message if none of those produce a path.
 
-Once `brew install bastra` ships (roadmap, [#3](https://github.com/n0mad-ai/bastra-recall/issues/3)), the call simplifies to `bastra install claude-desktop`. Until then, run via `node dist/cli.js …` from the cloned repo.
+Once the brew tap is live, this collapses to `bastra install all`.
 
-#### Manual install (current alternative for the other surfaces)
+#### C) Fully manual — fallback
 
-Add the MCP server block to your client's config (`~/.claude.json` for Claude Code, `~/Library/Application Support/Claude/claude_desktop_config.json` for Claude Desktop).
+Add the MCP server block to your client's config (`~/.claude.json` for Claude Code, `~/Library/Application Support/Claude/claude_desktop_config.json` for Claude Desktop, `~/.cursor/mcp.json` for Cursor).
 
 **Recommended (forwarder mode — shares one daemon across all sessions):**
 
@@ -153,20 +160,14 @@ The forwarder is a thin stdio-MCP wrapper that talks to a single local HTTP daem
 }
 ```
 
-Each session spawns its own embedded daemon. Simpler, but loses cross-session vault consistency on cloud-storage mounts where the file watcher lags.
-
-For Claude Code, also activate the Skill (save/recall trigger discipline) and the reflex hooks:
+For Claude Code, also drop the Skill + hooks by hand:
 
 ```bash
 bash packages/skill/install.sh        # copies SKILL.md → ~/.claude/skills/bastra-recall/
 bash packages/skill/install-hook.sh   # registers PreToolUse + SessionStart hooks in ~/.claude/settings.json
 ```
 
-Then **restart your client** — Skills and hooks are read at startup. Both hooks post to `http://127.0.0.1:6723/hook/recall` (port configurable via `BASTRA_HTTP_PORT`); if no daemon is reachable they silently no-op, so an unloaded MCP server never blocks the AI.
-
-Re-run `install.sh` whenever `SKILL.md` changes; re-run `install-hook.sh` only if hook binary paths move. To remove the hooks again: `bash packages/skill/install-hook.sh --uninstall`.
-
-A Homebrew tap and `bastra-recall init` are tracked as roadmap issues.
+`bastra install claude-code` does both of these for you in path B. Re-run `install.sh` whenever `SKILL.md` changes; re-run `install-hook.sh` only if hook binary paths move. To remove the hooks again: `bash packages/skill/install-hook.sh --uninstall`.
 
 ### REST API (for non-MCP clients)
 
@@ -304,43 +305,50 @@ confidence: 0.95
 
 Das `recall_when`-Feld ist die Brücke zwischen Save und Recall: beim Speichern deklariert die AI die Kontexte, in denen die spätere Sitzung daran erinnert werden soll. Siehe [docs/memory-schema.md](./docs/memory-schema.md) für die vollständige Feld-Semantik und sechs Beispiel-Memories für `lesson`, `preference`, `project-fact`, `meta-working`, `decision`, `workflow`.
 
-### Schnellstart
+### Installation
 
-Voraussetzungen: Node 20+, ein Mac, ein Obsidian-Vault (oder irgendein Ordner mit `.md`-Dateien).
+Drei Wege, nach Aufwand sortiert. Bastra Bridge (das OSS-Paket) ist eigenständig vollständig für alle Vault-Operationen — die paid Bastra Personal/Pro/Studio Mac-App ist optionaler UI-Layer obendrauf, kein Backend.
+
+#### A) Ein Doppelklick — am einfachsten, für Nicht-Coder (Rollout läuft)
+
+1. Lade **Install Bastra.command** aus dem aktuellen GitHub-Release.
+2. Doppelklick im Finder.
+3. Fertig. Claude Code / Claude Desktop / Cursor neu starten.
+
+Das Skript installiert bei Bedarf Homebrew, fügt den bastra-Tap hinzu, installiert `bastra-recall` und führt `bastra install all` aus — kein Terminal-Wissen nötig.
+
+> **Status (heute):** `distribution/Install Bastra.command` liegt im Repo. Der Homebrew-Tap (`n0mad-ai/homebrew-tap`), den das Skript erwartet, wird mit Schließen von [#3](https://github.com/n0mad-ai/bastra-recall/issues/3) veröffentlicht. Bis dahin Pfad B nutzen.
+
+#### B) Ein Befehl — für Entwickler
+
+Voraussetzungen: Node 20+, Git.
 
 ```bash
 git clone https://github.com/n0mad-ai/bastra-recall.git
 cd bastra-recall/packages/daemon
 npm install
 npm run build
-```
 
-#### Ein-Befehl-Installation (empfohlen)
-
-Mit dem Daemon kommt eine `bastra`-CLI mit. Sie trägt den MCP-Server in die Config des jeweiligen Clients ein, legt vorher ein Backup an und ist bei mehrfachem Aufruf idempotent.
-
-```bash
-node dist/cli.js install claude-desktop      # funktioniert heute
-node dist/cli.js install all --dry-run       # Vorschau für alle unterstützten Surfaces
-node dist/cli.js doctor                      # Status aller Surfaces prüfen
-node dist/cli.js uninstall claude-desktop    # Installation rückgängig machen
+node dist/cli.js install all       # registriert bei jedem unterstützten AI-Client
+node dist/cli.js doctor            # Status überall prüfen
+node dist/cli.js uninstall all     # alles rückgängig machen
 ```
 
 Adapter-Status:
 
-| Surface | Status |
-|---|---|
-| `claude-desktop` | ✅ implementiert (idempotent, atomarer Write, automatisches Backup) |
-| `claude-code` | 🟡 Skelett-Stub — folgt als Nächstes |
-| `cursor` | 🟡 Skelett-Stub — folgt als Nächstes |
+| Surface | Was installiert wird | Status |
+|---|---|---|
+| `claude-desktop` | MCP-Server-Eintrag in `claude_desktop_config.json` | ✅ implementiert |
+| `claude-code` | MCP-Server in `.claude.json` + Skill in `.claude/skills/` + PreToolUse- & SessionStart-Hooks in `.claude/settings.json` | ✅ implementiert |
+| `cursor` | MCP-Server-Eintrag in `.cursor/mcp.json` | ✅ implementiert (Cursor-Rules-Layer separater Roadmap-Punkt) |
 
-Der Vault-Pfad wird in dieser Reihenfolge aufgelöst: `--vault <pfad>`-Flag → `BASTRA_VAULT_PATH`-ENV → Auto-Detect aus einer bestehenden Registrierung in `~/.claude.json` oder `claude_desktop_config.json`. Wenn keines davon greift, bricht die CLI mit einer klaren Meldung ab.
+Jeder Write ist **idempotent** (Re-Runs sind No-Ops), **atomar** (Tmp-File + Rename), **gesichert** (timestamped `.bak-…` neben dem Original) und **parse-safe** (kaputtes JSON bricht den Lauf ab statt es zu zerstören). Vault-Pfad-Auflösung in dieser Reihenfolge: `--vault <pfad>`-Flag → `BASTRA_VAULT_PATH`-ENV → Auto-Detect aus bestehender Registrierung in `~/.claude.json` oder `claude_desktop_config.json`. Wenn nichts greift, bricht die CLI mit klarer Meldung ab.
 
-Sobald `brew install bastra` ausgeliefert ist (Roadmap, [#3](https://github.com/n0mad-ai/bastra-recall/issues/3)), verkürzt sich der Aufruf zu `bastra install claude-desktop`. Bis dahin via `node dist/cli.js …` aus dem geklonten Repo.
+Sobald der Brew-Tap live ist, verkürzt sich das zu `bastra install all`.
 
-#### Manuelle Installation (aktuelle Alternative für die übrigen Surfaces)
+#### C) Komplett manuell — Fallback
 
-MCP-Server-Block in die Client-Config eintragen (für Claude Code: `~/.claude.json`, für Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`).
+MCP-Server-Block in die Client-Config eintragen (für Claude Code: `~/.claude.json`, für Claude Desktop: `~/Library/Application Support/Claude/claude_desktop_config.json`, für Cursor: `~/.cursor/mcp.json`).
 
 **Empfohlen (Forwarder-Modus — ein Daemon für alle Sitzungen):**
 
@@ -368,20 +376,14 @@ Der Forwarder ist ein dünner stdio-MCP-Wrapper, der mit einem einzigen lokalen 
 }
 ```
 
-Jede Sitzung spawnt ihren eigenen embedded Daemon. Einfacher, aber Cross-Session-Vault-Konsistenz geht auf Cloud-Storage-Mounts mit lahmen File-Watcher verloren.
-
-Für Claude Code zusätzlich Skill (Save/Recall-Trigger-Disziplin) und Reflex-Hooks aktivieren:
+Für Claude Code zusätzlich Skill + Hooks manuell ablegen:
 
 ```bash
 bash packages/skill/install.sh        # kopiert SKILL.md → ~/.claude/skills/bastra-recall/
 bash packages/skill/install-hook.sh   # registriert PreToolUse + SessionStart-Hooks in ~/.claude/settings.json
 ```
 
-Dann **Client neu starten** — Skills und Hooks werden beim Start gelesen. Beide Hooks posten an `http://127.0.0.1:6723/hook/recall` (Port konfigurierbar via `BASTRA_HTTP_PORT`); wenn kein Daemon erreichbar ist, geben sie still auf — ein nicht-geladener MCP-Server blockiert die AI also niemals.
-
-`install.sh` neu ausführen, wenn sich `SKILL.md` ändert; `install-hook.sh` nur, wenn sich Hook-Binärpfade verschieben. Hooks wieder entfernen: `bash packages/skill/install-hook.sh --uninstall`.
-
-Ein Homebrew-Tap und ein `bastra-recall init`-Befehl sind als Roadmap-Issues geführt.
+`bastra install claude-code` aus Pfad B erledigt beides für dich. `install.sh` neu ausführen, wenn sich `SKILL.md` ändert; `install-hook.sh` nur, wenn sich Hook-Binärpfade verschieben. Hooks wieder entfernen: `bash packages/skill/install-hook.sh --uninstall`.
 
 ### REST API (für Nicht-MCP-Clients)
 

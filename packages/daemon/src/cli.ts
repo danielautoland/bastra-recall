@@ -15,8 +15,9 @@
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { copyFile, mkdir, readFile, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
+import { spawnSync } from "node:child_process";
 
 const VERSION = "0.1.0";
 
@@ -210,32 +211,46 @@ async function claudeDesktopInstall(opts: InstallOpts): Promise<InstallResult> {
 
   const data = read.data;
   const servers = getServersBlock(data) ?? {};
+  const mcpMatches = blocksMatch(servers[SERVER_KEY], block);
 
-  if (blocksMatch(servers[SERVER_KEY], block)) {
+  // Claude Desktop reads skills from the same ~/.claude/skills/ path as
+  // Claude Code, so we drop the Skill here too (idempotent). Hooks aren't
+  // a Claude Desktop surface yet.
+  const skillResult = await copySkill({ dryRun: opts.dryRun });
+  if (skillResult.status === "error") return { status: "error", message: `skill: ${skillResult.detail}`, configPath };
+
+  if (mcpMatches && skillResult.status === "already-installed") {
     return {
       status: "already-installed",
-      message: `'${SERVER_KEY}' already registered with matching forwarder + vault`,
+      message: "MCP server and skill both already in place",
       configPath,
     };
   }
 
   if (opts.dryRun) {
-    return {
-      status: "would-install",
-      message: `would register '${SERVER_KEY}' (vault=${vault.path}, forwarder=${block.args[0]})`,
-      configPath,
-    };
+    const steps: string[] = [];
+    steps.push(mcpMatches ? "mcp: already matches" : `mcp: would register '${SERVER_KEY}' (vault=${vault.path})`);
+    steps.push(`skill: ${skillResult.detail}`);
+    return { status: "would-install", message: steps.join("\n  · "), configPath };
   }
 
-  const backupPath = await backupConfig(configPath);
-  data.mcpServers = { ...servers, [SERVER_KEY]: block };
-  await atomicWriteJson(configPath, data);
+  let backupPath: string | undefined;
+  if (!mcpMatches) {
+    backupPath = (await backupConfig(configPath)) ?? undefined;
+    data.mcpServers = { ...servers, [SERVER_KEY]: block };
+    await atomicWriteJson(configPath, data);
+  }
+
+  const lines: string[] = [];
+  lines.push(mcpMatches ? "mcp: already matches" : `mcp: registered '${SERVER_KEY}'`);
+  lines.push(`skill: ${skillResult.detail}`);
+  lines.push("restart Claude Desktop to activate");
 
   return {
     status: "installed",
-    message: `registered '${SERVER_KEY}' — restart Claude Desktop to pick it up`,
+    message: lines.join("\n  · "),
     configPath,
-    backupPath: backupPath ?? undefined,
+    backupPath,
   };
 }
 
@@ -305,7 +320,10 @@ async function claudeDesktopDoctor(): Promise<DoctorResult> {
     }
   }
 
-  // 3. Daemon reachable
+  // 3. Skill (shared with Claude Code under ~/.claude/skills/)
+  details["skill"] = (await fileExists(SKILL_TARGET_FILE)) ? `present (${SKILL_TARGET_FILE})` : "missing";
+
+  // 4. Daemon reachable
   const probe = await probeDaemon();
   details["daemon-on-6723"] = probe.ok ? `reachable (${probe.detail})` : probe.detail;
 
@@ -314,9 +332,10 @@ async function claudeDesktopDoctor(): Promise<DoctorResult> {
     details["forwarder-path"]?.includes("MISSING") === true ||
     details["vault-path"]?.includes("MISSING") === true ||
     details["forwarder-path"]?.startsWith("no ") === true ||
-    details["vault-path"]?.startsWith("not ") === true;
-  if (broken) return { status: "broken", message: "registered but referenced paths are missing or incomplete", details };
-  return { status: "ok", message: "registered and looks healthy", details };
+    details["vault-path"]?.startsWith("not ") === true ||
+    details["skill"] === "missing";
+  if (broken) return { status: "broken", message: "registered but skill or referenced paths are missing", details };
+  return { status: "ok", message: "registered with skill, looks healthy", details };
 }
 
 // ─── claude-code adapter helpers (skill + hooks) ─────────────────
@@ -355,18 +374,6 @@ async function copySkill(opts: { dryRun: boolean }): Promise<{ status: SkillStep
   await mkdir(SKILL_TARGET_DIR, { recursive: true });
   await copyFile(SKILL_SOURCE_PATH, SKILL_TARGET_FILE);
   return { status: "installed", detail: `skill installed at ${SKILL_TARGET_FILE}` };
-}
-
-async function removeSkill(opts: { dryRun: boolean }): Promise<{ status: SkillStepStatus; detail: string }> {
-  if (!(await fileExists(SKILL_TARGET_FILE))) {
-    return { status: "not-present", detail: "skill not installed" };
-  }
-  if (opts.dryRun) {
-    return { status: "would-remove", detail: `would remove ${SKILL_TARGET_FILE}` };
-  }
-  await rm(SKILL_TARGET_FILE, { force: true });
-  try { await rmdir(SKILL_TARGET_DIR); } catch { /* dir not empty, leave it */ }
-  return { status: "removed", detail: `removed skill at ${SKILL_TARGET_FILE}` };
 }
 
 interface HookBlock {
@@ -553,18 +560,21 @@ async function claudeCodeUninstall(opts: { dryRun: boolean }): Promise<Uninstall
   const servers = getServersBlock(data);
   const mcpPresent = !!(servers && SERVER_KEY in servers);
 
-  const skillResult = await removeSkill({ dryRun: opts.dryRun });
+  // Skill is shared with Claude Desktop (~/.claude/skills/bastra-recall).
+  // We don't remove it here — Claude Desktop might still need it. To purge
+  // the skill, run a separate `bastra uninstall --purge-skill` or remove
+  // the file manually.
   const hookResult = await patchClaudeCodeHooks("uninstall", { dryRun: opts.dryRun });
 
-  if (!mcpPresent && skillResult.status === "not-present" && hookResult.status === "not-present") {
-    return { status: "not-present", message: "nothing to remove", configPath };
+  if (!mcpPresent && hookResult.status === "not-present") {
+    return { status: "not-present", message: "nothing to remove (skill kept in case Claude Desktop still uses it)", configPath };
   }
 
   if (opts.dryRun) {
     const steps: string[] = [];
     steps.push(mcpPresent ? `mcp: would remove '${SERVER_KEY}'` : "mcp: not present");
-    steps.push(`skill: ${skillResult.detail}`);
     steps.push(`hooks: ${hookResult.detail}`);
+    steps.push("skill: kept (shared with Claude Desktop)");
     return { status: "would-remove", message: steps.join("\n  · "), configPath };
   }
 
@@ -579,8 +589,8 @@ async function claudeCodeUninstall(opts: { dryRun: boolean }): Promise<Uninstall
 
   const lines: string[] = [];
   lines.push(mcpPresent ? `mcp: removed '${SERVER_KEY}'` : "mcp: not present");
-  lines.push(`skill: ${skillResult.detail}`);
   lines.push(`hooks: ${hookResult.detail}`);
+  lines.push("skill: kept (shared with Claude Desktop)");
   lines.push("restart Claude Code to drop the connection");
 
   return {
@@ -803,7 +813,9 @@ Usage:
 
 Commands:
   install <surface|all>      Register bastra-recall with the AI client
-  uninstall <surface|all>    Remove the registration
+  uninstall <surface|all>    Remove the registration (skill is kept; it's shared)
+  update                     brew upgrade (if brew-installed) + re-register +
+                             daemon restart. Use this after pulling new code.
   doctor [surface|all]       Check status of one or every surface
   help                       Show this help
   version                    Show version
@@ -971,6 +983,102 @@ async function cmdDoctor(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
+// ─── update subcommand ───────────────────────────────────────────
+
+const LAUNCH_AGENT_LABEL = "ai.n0mad.bastra-recall";
+
+interface InstallMode {
+  mode: "brew" | "source" | "unknown";
+  cliPath: string;
+  detail: string;
+}
+
+function detectInstallMode(): InstallMode {
+  const cliPath = fileURLToPath(import.meta.url);
+  if (
+    cliPath.startsWith("/opt/homebrew/") ||
+    cliPath.startsWith("/usr/local/Cellar/") ||
+    cliPath.includes("/homebrew/Cellar/") ||
+    cliPath.includes("/Cellar/bastra-recall/")
+  ) {
+    return { mode: "brew", cliPath, detail: "installed via Homebrew" };
+  }
+  if (cliPath.includes("/Projekte/") || cliPath.includes("/repos/") || cliPath.includes("/src/")) {
+    return { mode: "source", cliPath, detail: "running from source checkout" };
+  }
+  return { mode: "unknown", cliPath, detail: "unable to determine install mode" };
+}
+
+function launchAgentPresent(uid: string): boolean {
+  const r = spawnSync("launchctl", ["print", `gui/${uid}/${LAUNCH_AGENT_LABEL}`], { stdio: "pipe" });
+  return r.status === 0;
+}
+
+async function cmdUpdate(args: ParsedArgs): Promise<number> {
+  const mode = detectInstallMode();
+  process.stdout.write(`→ install mode: ${mode.detail}\n`);
+  process.stdout.write(`  cli path: ${mode.cliPath}\n\n`);
+
+  if (args.dryRun) {
+    process.stdout.write("(dry-run — describing what would happen, writing nothing)\n\n");
+  }
+
+  // 1. Update the binary itself
+  if (mode.mode === "brew") {
+    process.stdout.write("→ brew upgrade bastra-recall\n");
+    if (!args.dryRun) {
+      const r = spawnSync("brew", ["upgrade", "bastra-recall"], { stdio: "inherit" });
+      if (r.status !== 0 && r.status !== null) {
+        process.stdout.write("\n✗ brew upgrade failed — fix it manually, then re-run 'bastra update'\n");
+        return 1;
+      }
+    } else {
+      process.stdout.write("  would run: brew upgrade bastra-recall\n");
+    }
+    process.stdout.write("\n");
+  } else if (mode.mode === "source") {
+    process.stdout.write("→ source install — rebuild yourself first if you haven't:\n");
+    process.stdout.write("    cd <bastra-recall> && git pull && npm install && npm run build\n");
+    process.stdout.write("  Then re-run 'bastra update' to refresh configs + restart the daemon.\n\n");
+  } else {
+    process.stdout.write("⚠ install mode unknown — make sure your code is up to date before continuing\n\n");
+  }
+
+  // 2. Re-register every surface (idempotent — refreshes skill content if SKILL.md changed)
+  process.stdout.write("→ re-registering with every supported surface (idempotent)\n\n");
+  const installArgs: ParsedArgs = { ...args, command: "install", surface: "all" };
+  const installRC = await cmdInstall(installArgs);
+  if (installRC !== 0) {
+    process.stdout.write("✗ re-register failed — fix the surface errors above, then re-run\n");
+    return installRC;
+  }
+
+  // 3. Restart the daemon so the new code is actually loaded
+  process.stdout.write("→ restarting daemon\n");
+  const uid = String(process.getuid?.() ?? 0);
+  if (launchAgentPresent(uid)) {
+    if (args.dryRun) {
+      process.stdout.write("  would kickstart LaunchAgent\n\n");
+    } else {
+      const kick = spawnSync(
+        "launchctl",
+        ["kickstart", "-k", `gui/${uid}/${LAUNCH_AGENT_LABEL}`],
+        { stdio: "inherit" },
+      );
+      if (kick.status === 0) process.stdout.write("  ✓ LaunchAgent kicked — daemon restarted with new code\n\n");
+      else process.stdout.write("  ✗ kickstart failed — restart the daemon manually\n\n");
+    }
+  } else {
+    process.stdout.write("  no LaunchAgent registered — running daemon (if any) still holds the old code in memory\n");
+    process.stdout.write("  Restart it manually:\n");
+    process.stdout.write("    lsof -i :6723             # find the daemon pid\n");
+    process.stdout.write("    kill <pid>                 # forwarder respawns it with new code on next call\n\n");
+  }
+
+  process.stdout.write("→ done. Restart any open AI clients (Claude Code, Claude Desktop, Cursor) to pick up the new code.\n");
+  return 0;
+}
+
 function formatStatus(status: string): string {
   switch (status) {
     case "installed": return "✓ installed";
@@ -1002,6 +1110,7 @@ async function main(): Promise<number> {
     case "install": return cmdInstall(args);
     case "uninstall": return cmdUninstall(args);
     case "doctor": return cmdDoctor(args);
+    case "update": return cmdUpdate(args);
     default:
       process.stderr.write(`error: unknown command '${args.command}' — run 'bastra help'\n`);
       return 2;

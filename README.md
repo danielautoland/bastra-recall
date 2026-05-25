@@ -201,9 +201,9 @@ Milestone-based, not phase-based. Each gate is a hard pass/fail.
 | **M1** | Daemon + read path (`recall`, `load_memory`) | ✅ **Done** — MCP server live, watcher works on cloud-storage mounts. |
 | **M2** | Save path + autonomous-save triggers | 🟡 **Functional** — `save_memory` MCP tool live with force-reindex. Trigger discipline shipped as a Skill. False-save / missed-save metrics not yet collected. |
 | **M0.5** | Stress-test recall (paraphrased / cross-memory / anti-hallucination) | ⏳ Open — see issues. |
-| **M3** | Reflex layer: hooks for `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Functional (PreToolUse + SessionStart)** — both ship and post to daemon's `/hook/recall`. Telemetry tracks follow-through (load_memory ↔ hint correlation). `UserPromptSubmit` and `Stop` queued for v0.5 once data shows where they'd help. |
-| **Distribution** | Homebrew tap, `bastra-recall init`, npm package | ⏳ Open. |
-| **Multi-surface** | HTTP transport for Claude.ai web (Custom Connector), ChatGPT Custom GPT (OpenAPI spec) | ⏳ Open. |
+| **M3** | Reflex layer: hooks for `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Functional (PreToolUse + SessionStart, 2 of 4)** — both live in production: `PreToolUse` injects `<recall-hints>` before every Write/Edit (2547 invocations over 22 days, 91.5% REQUIRED-band hits), `SessionStart` injects `<session-context>` at every new chat. `UserPromptSubmit` and `Stop` queued. |
+| **Distribution** | Homebrew tap, `bastra` CLI, `Install Bastra.command`, npm package | 🟡 **Functional** — `bastra` CLI ships with adapters for every surface; Homebrew tap [n0mad-ai/homebrew-tap](https://github.com/n0mad-ai/homebrew-tap) published with a head-only formula; `distribution/Install Bastra.command` is the doubleclick wrapper. Open: end-to-end brew test, npm publish, GitHub release with the `.command` as an asset (#3). |
+| **Multi-surface** | One install per AI client (MCP + Skill + Hooks where applicable) + REST gateway for non-MCP clients | 🟡 **Functional** — `bastra install` covers Claude Code (MCP + Skill + Hooks), Claude Desktop (MCP + Skill), Cursor (MCP). REST `/api/v1/*` enables ChatGPT Custom GPT Actions over HTTPS + tunnel. Open: OpenAPI 3.0 spec, Claude.ai web Custom Connector registration (#7). |
 
 Out of v0: **codebase indexing**, **multi-device sync**. See [PLAN.md](./PLAN.md).
 
@@ -419,9 +419,9 @@ Milestone-basiert, nicht Phasen-basiert. Jedes Gate ist hartes Pass/Fail.
 | **M1** | Daemon + Read-Path (`recall`, `load_memory`) | ✅ **Fertig** — MCP-Server live, Watcher funktioniert auf Cloud-Storage-Mounts. |
 | **M2** | Save-Path + autonome Save-Trigger | 🟡 **Funktional** — `save_memory` MCP-Tool live mit Force-Reindex. Trigger-Disziplin als Skill ausgeliefert. False-Save- / Missed-Save-Metriken noch nicht erhoben. |
 | **M0.5** | Stresstest für Recall (paraphrasiert / cross-memory / anti-halluzination) | ⏳ Offen — siehe Issues. |
-| **M3** | Reflex-Layer: Hooks für `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Funktional (PreToolUse + SessionStart)** — beide ausgeliefert, beide posten an den `/hook/recall` des Daemons. Telemetrie misst Follow-Through (load_memory ↔ Hint-Korrelation). `UserPromptSubmit` und `Stop` warten auf v0.5, sobald Daten zeigen wo sie helfen. |
-| **Distribution** | Homebrew-Tap, `bastra-recall init`, npm-Package | ⏳ Offen. |
-| **Multi-Surface** | HTTP-Transport für Claude.ai Web (Custom Connector), ChatGPT Custom GPT (OpenAPI-Spec) | ⏳ Offen. |
+| **M3** | Reflex-Layer: Hooks für `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Funktional (PreToolUse + SessionStart, 2 von 4)** — beide produktiv live: `PreToolUse` injiziert `<recall-hints>` vor jedem Write/Edit (2547 Aufrufe in 22 Tagen, 91,5% REQUIRED-Hits), `SessionStart` injiziert `<session-context>` bei jedem neuen Chat. `UserPromptSubmit` und `Stop` warten. |
+| **Distribution** | Homebrew-Tap, `bastra`-CLI, `Install Bastra.command`, npm-Package | 🟡 **Funktional** — `bastra`-CLI mit Adaptern für jedes Surface; Homebrew-Tap [n0mad-ai/homebrew-tap](https://github.com/n0mad-ai/homebrew-tap) mit Head-only-Formula veröffentlicht; `distribution/Install Bastra.command` als Doppelklick-Wrapper. Offen: End-to-End-Brew-Test, npm publish, GitHub-Release mit der `.command`-Datei als Asset (#3). |
+| **Multi-Surface** | Ein Install pro AI-Client (MCP + Skill + Hooks wo zutreffend) + REST-Gateway für Nicht-MCP-Clients | 🟡 **Funktional** — `bastra install` deckt Claude Code (MCP + Skill + Hooks), Claude Desktop (MCP + Skill), Cursor (MCP) ab. REST `/api/v1/*` ermöglicht ChatGPT Custom GPT Actions via HTTPS + Tunnel. Offen: OpenAPI 3.0-Spec, Claude.ai Web Custom Connector Registrierung (#7). |
 
 Außerhalb von v0: **Codebase-Indexing**, **Multi-Device-Sync**. Siehe [PLAN.md](./PLAN.md).
 

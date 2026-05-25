@@ -1,6 +1,6 @@
 ---
 name: bastra-recall
-description: Persistent teammate-memory for Claude across sessions. USE PROACTIVELY whenever the user (a) expresses repetition or frustration about a recurring issue ("wieder", "schon wieder", "wie oft", emphatic caps), (b) states an explicit durable rule ("immer X", "nie Y", "bei diesem Projekt …"), (c) corrects a recurring tendency in your behavior, (d) finalizes an architectural decision after weighing options, or (e) confirms a workflow ("lass uns das immer so machen"). Also USE before writing/editing code, before giving multi-step plans, and at session start — to recall stored lessons, preferences, and project facts via the bastra-recall MCP server.
+description: Persistent teammate-memory for Claude across sessions. USE PROACTIVELY whenever the user (a) expresses repetition or frustration about a recurring issue ("wieder", "schon wieder", "wie oft", emphatic caps), (b) states an explicit durable rule ("immer X", "nie Y", "bei diesem Projekt …"), (c) corrects a recurring tendency in your behavior, (d) finalizes an architectural decision after weighing options, (e) confirms a workflow ("lass uns das immer so machen"), or (f) completes a coherent feature / multi-file refactor / sub-system milestone (save the file map as project-fact). Also USE before writing/editing code, before a new coding block in an area you haven't touched this session (recall the topology map first), before giving multi-step plans, and at session start — to recall stored lessons, preferences, and project facts via the bastra-recall MCP server.
 ---
 
 # bastra-recall — autonomous teammate memory
@@ -19,6 +19,7 @@ Call `recall(query, k=5)` proactively in these moments:
 |---|---|
 | **Session start** (once per session) | `"<project name> preferences user-preference active context"` — preloads durable context |
 | **Before writing/editing a file** | `"writing <filetype> at <path>, contains <topics>"` — catches lessons before mistakes (e.g. CSS pitfalls, schema rules) |
+| **Before a new coding block / plan in a feature area** | `"<project> <feature/area> current state files architecture"` — surfaces which files are relevant + what's already built (see Project topology below) |
 | **Before a multi-step plan or recommendation** | `"giving plan/recommendation for <topic>"` — surfaces format preferences |
 | **User prompt touches a stored topic** | the prompt itself, optionally with project context |
 | **Before `save_memory`** | the title/topic — duplicate check |
@@ -45,6 +46,7 @@ Idempotent: don't reload a memory you've already loaded this turn.
 | Architectural decision finalized after weighing options | "ok, dann nehmen wir Drizzle" | `decision` |
 | Workflow confirmation | "super, lass uns das immer so machen" | `workflow` |
 | Bug fixed after >2 iterations with non-obvious root cause | — | `lesson` (capture the FAILED PATH too, not just the fix) |
+| **Feature / coding block completion** (multi-file feature done, sub-system stabilized, refactor finalized, issue closed with code) | — | `project-fact` (see Project topology below) |
 
 ### ANTI-signals — do NOT save
 
@@ -74,6 +76,47 @@ Surface a single line, prefixed with `→`, then continue with the actual task:
 ```
 
 Nothing more. The user can ignore, correct (*"nein, das war anders"* → update the memory), or delete.
+
+---
+
+## Project topology — feature state in memory
+
+Beyond lessons and decisions, the vault also serves as a **living map of what was built when, in which files, by which decisions**. Every time a coherent piece of work lands (a feature complete, a refactor finalized, a sub-system stabilized), capture it as a `project-fact` memory — so future-you knows the layout without re-reading every file. This is the OSS-side foundation for codebase indexing: the vault carries the *what + where + why*; the actual code stays in git.
+
+### When to save a topology / feature-state fact
+
+After ANY of these events:
+
+- A feature is functionally complete (PR-ready, works end-to-end).
+- A multi-file refactor is done.
+- A sub-system stabilized (e.g. „the daemon HTTP layer now owns auth + CORS + REST tools").
+- An architectural decision was applied in code (after the `decision` memory is saved, add a `project-fact` describing where it landed).
+- An issue is closed with code changes.
+
+### What to save
+
+Memory `type: project-fact`. Body should answer:
+
+- **What** — one sentence what this feature/area does.
+- **Where** — concrete file paths in `path/to/file.ts:42` format for key entry points.
+- **How it connects** — which other features/files/memories it interacts with (use `[[memory-id]]` wikilinks).
+- **Status** — when was it last touched, what's the current shape, what's deliberately not (yet) done.
+
+Title shape: `<project> — <area>: <what was just landed>` (e.g. `bastra-recall — cli: install/uninstall/doctor/update for all surfaces`).
+
+### When to recall topology
+
+Before starting a new coding block, plan, or recommendation in an area you haven't touched in this session — and before quoting which files matter for a feature:
+
+```
+recall("<project> <area> files structure current state", k=5)
+```
+
+If `project-fact` hits come back with score ≥ 50, `load_memory` them. They tell you which files matter without grepping. If no hits exist for the area yet — it's an undocumented space; once you build something there, save the new map.
+
+### Refresh, don't duplicate
+
+When you complete the **next** version of a feature you already have a topology memory for, **update** the existing one with `overwrite=true` (same id). Don't create `feature-v2`, `feature-final`. Refresh the same node so the map stays current.
 
 ---
 

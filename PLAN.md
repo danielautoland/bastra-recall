@@ -104,10 +104,11 @@ If M3 doesn't pass cleanly, the project iterates on triggers and ranking before 
 Listed not to forget, but to make clear they're explicitly *not* in M0–M3:
 
 - Embeddings (semantic recall) — only if M0 fails or M3 reveals miss patterns
-- Codebase indexing (AST, topology, service-caller graphs) — separate project track
 - Multi-Mac / multi-device sync — vault is a folder, defer to user's choice (iCloud / Dropbox / Git)
 - Plugin-marketplace bundling — config-snippet works for v0 ergonomics
 - Schema migration via LLM — ten of Daniel's own existing memorys, hand-migrated, suffice
+
+Note: **codebase indexing** (AST, symbol graph) is pulled *into* v0 as part of the M4 milestone (see roadmap), accelerated by external funding.
 
 ## Open questions
 

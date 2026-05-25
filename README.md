@@ -217,7 +217,7 @@ Milestone-based, not phase-based. Each gate is a hard pass/fail.
 | **Distribution** | Homebrew tap, `bastra` CLI, `Install Bastra.command`, npm package | 🟡 **Functional** — `bastra` CLI ships with adapters for every surface; Homebrew tap [n0mad-ai/homebrew-tap](https://github.com/n0mad-ai/homebrew-tap) published with a head-only formula; `distribution/Install Bastra.command` is the doubleclick wrapper. Open: end-to-end brew test, npm publish, GitHub release with the `.command` as an asset (#3). |
 | **Multi-surface** | One install per AI client (MCP + Skill + Hooks where applicable) + REST gateway for non-MCP clients | 🟡 **Functional** — `bastra install` covers Claude Code (MCP + Skill + Hooks), Claude Desktop (MCP + Skill), Cursor (MCP). REST `/api/v1/*` enables ChatGPT Custom GPT Actions over HTTPS + tunnel. Open: OpenAPI 3.0 spec, Claude.ai web Custom Connector registration (#7). |
 
-Out of v0: **codebase indexing**, **multi-device sync**. See [PLAN.md](./PLAN.md).
+Out of v0: **multi-device sync**. See [PLAN.md](./PLAN.md). (Codebase indexing has been pulled into v0 — see the M4 milestone.)
 
 Multi-device today works via the OS-level sync of the vault folder (iCloud / Google Drive / Dropbox / Git) — the file watcher's polling mode handles the latency. A browser-based UI is not planned — Obsidian already provides a great Markdown editor for the vault.
 
@@ -439,7 +439,7 @@ Milestone-basiert, nicht Phasen-basiert. Jedes Gate ist hartes Pass/Fail.
 | **Distribution** | Homebrew-Tap, `bastra`-CLI, `Install Bastra.command`, npm-Package | 🟡 **Funktional** — `bastra`-CLI mit Adaptern für jedes Surface; Homebrew-Tap [n0mad-ai/homebrew-tap](https://github.com/n0mad-ai/homebrew-tap) mit Head-only-Formula veröffentlicht; `distribution/Install Bastra.command` als Doppelklick-Wrapper. Offen: End-to-End-Brew-Test, npm publish, GitHub-Release mit der `.command`-Datei als Asset (#3). |
 | **Multi-Surface** | Ein Install pro AI-Client (MCP + Skill + Hooks wo zutreffend) + REST-Gateway für Nicht-MCP-Clients | 🟡 **Funktional** — `bastra install` deckt Claude Code (MCP + Skill + Hooks), Claude Desktop (MCP + Skill), Cursor (MCP) ab. REST `/api/v1/*` ermöglicht ChatGPT Custom GPT Actions via HTTPS + Tunnel. Offen: OpenAPI 3.0-Spec, Claude.ai Web Custom Connector Registrierung (#7). |
 
-Außerhalb von v0: **Codebase-Indexing**, **Multi-Device-Sync**. Siehe [PLAN.md](./PLAN.md).
+Außerhalb von v0: **Multi-Device-Sync**. Siehe [PLAN.md](./PLAN.md). (Codebase-Indexing wurde in v0 vorgezogen — siehe M4-Milestone.)
 
 Multi-Device funktioniert heute über OS-Level-Sync des Vault-Ordners (iCloud / Google Drive / Dropbox / Git) — der Polling-Modus des File-Watchers gleicht die Latenz aus. Ein Browser-basiertes UI ist nicht geplant — Obsidian liefert bereits einen sehr guten Markdown-Editor für den Vault.
 

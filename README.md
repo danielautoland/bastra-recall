@@ -209,6 +209,10 @@ Out of v0: **codebase indexing**, **multi-device sync**. See [PLAN.md](./PLAN.md
 
 Multi-device today works via the OS-level sync of the vault folder (iCloud / Google Drive / Dropbox / Git) — the file watcher's polling mode handles the latency. A browser-based UI is not planned — Obsidian already provides a great Markdown editor for the vault.
 
+### Bastra Mac App
+
+A native macOS app is being built on top of bastra-recall — same vault, same daemon, just a graphical interface for people who don't want to live in the terminal. In development; a dedicated page with screenshots and updates will follow.
+
 ### License
 
 MIT — see [LICENSE](./LICENSE).
@@ -426,6 +430,10 @@ Milestone-basiert, nicht Phasen-basiert. Jedes Gate ist hartes Pass/Fail.
 Außerhalb von v0: **Codebase-Indexing**, **Multi-Device-Sync**. Siehe [PLAN.md](./PLAN.md).
 
 Multi-Device funktioniert heute über OS-Level-Sync des Vault-Ordners (iCloud / Google Drive / Dropbox / Git) — der Polling-Modus des File-Watchers gleicht die Latenz aus. Ein Browser-basiertes UI ist nicht geplant — Obsidian liefert bereits einen sehr guten Markdown-Editor für den Vault.
+
+### Bastra Mac App
+
+Eine native macOS-App entsteht auf Basis von bastra-recall — selber Vault, selber Daemon, nur mit grafischer Oberfläche für Leute, die nicht im Terminal leben wollen. In Entwicklung; eine eigene Seite mit Screenshots und Updates folgt.
 
 ### Lizenz
 

@@ -21,6 +21,20 @@ workflow is light — but a few conventions keep things smooth.
 | 🔧 Code | See "Development setup" below |
 | 💖 Sponsor | [github.com/sponsors/n0mad-ai](https://github.com/sponsors/n0mad-ai) — credited in [SUPPORTERS.md](./SUPPORTERS.md) |
 
+## Claiming an issue
+
+If you'd like to work on something — especially a `good first issue` —
+drop a short comment on the issue:
+
+> Hi! I'd like to work on this.
+
+You'll be assigned (usually within a day) so nobody duplicates the work.
+Once assigned, the issue is yours. If you can't get to it within ~2 weeks,
+please leave a note so it can free up for someone else.
+
+Already a few commits in by the time you comment? Even better — link the
+branch in your fork.
+
 ## Development setup
 
 ### Requirements
@@ -127,11 +141,16 @@ Body explains **why**, not what — the diff already shows what.
 
 ## Pull requests
 
-- Branch from `main`.
+- **From a fork:** fork the repo, branch from `main` in your fork, then
+  open the PR against `n0mad-ai/bastra-recall:main`. (You don't need
+  write access — the standard GitHub fork-PR flow works.)
 - Reference the issue: `Fixes #N` or `Refs #N` in the PR body.
+- Include a short **test plan** — what you ran, what you saw. A
+  paste of CLI output or a screenshot is enough for most changes.
 - Run `npm run check:types` and `npm run build` before opening.
 - Smaller PRs land faster — split if you can.
-- WIP / draft PRs are welcome; mark them with `[WIP]` in the title.
+- WIP / draft PRs are welcome; open them as **Draft** PRs (the GitHub
+  button) rather than `[WIP]` in the title.
 
 ## License + DCO
 

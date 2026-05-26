@@ -1,0 +1,8 @@
+# Bastra Recall — code ownership
+#
+# GitHub uses this file to auto-request reviews on pull requests.
+# Format: <path> <owner> [<owner> …]
+# Patterns follow .gitignore syntax; later entries override earlier ones.
+
+# Default owner for everything in the repo
+*       @n0mad-ai

@@ -2,315 +2,210 @@
 
 ## Goal
 
-A persistent teammate memory for Claude that:
+Bastra.Recall is a local-first memory layer for AI assistants. It gives Claude Code, Claude Desktop, Cursor, ChatGPT Actions, and other MCP/HTTP clients one shared vault of durable lessons, preferences, project facts, decisions, workflows, bookmarks, and document sidecars.
 
-- Works **across all Claude surfaces** Daniel uses (Claude Code, Claude Desktop, Claude.ai web/chat, Co-work). One vault, one index, one source of truth.
-- **Saves autonomously** when a lesson is learned — without the user prompting.
-- **Recalls before acting**, not only when the user asks.
-- Stays **local-first, plain-markdown, Obsidian-compatible**.
+The operating goal is simple: the user should not have to re-explain stable context. The assistant saves durable memories when a lesson or rule is learned, and recalls relevant memories before acting.
 
-## High-level shape
+## Current Runtime Shape
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│  Vault  (~/nexus-vault/)                                             │
-│    Plain Markdown with YAML frontmatter (see memory-schema.md)       │
-│    Editable in Obsidian, by Claude, by hand.                         │
-└──────────────────────┬───────────────────────────────────────────────┘
-                       │ chokidar file-watcher
-                       ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│  bastra-recall daemon  (single TypeScript process, always running)    │
-│    - SQLite index (graph + FTS5)                                     │
-│    - stdio MCP server   ←── Claude Code, Claude Desktop              │
-│    - HTTP MCP server    ←── Claude.ai web (Custom Connector)         │
-│    - REST endpoints     ←── hooks, CLI, future surfaces              │
-└──────────────────────┬───────────────────────────────────────────────┘
-                       │
-   ┌───────────────────┼───────────────────┬─────────────────────┐
-   ▼                   ▼                   ▼                     ▼
-┌─────────────┐  ┌─────────────┐   ┌────────────────┐   ┌──────────────┐
-│ Claude Code │  │ Claude      │   │ Claude.ai web  │   │ Co-work,     │
-│   (CLI)     │  │ Desktop     │   │  (chat, proj.) │   │  future      │
-│   stdio MCP │  │  stdio MCP  │   │   HTTP MCP     │   │  HTTP MCP    │
-└─────────────┘  └─────────────┘   └────────────────┘   └──────────────┘
+```text
+Markdown vault
+  - recursive .md scan
+  - YAML frontmatter + markdown body
+  - Obsidian-compatible wikilinks
+          |
+          | Vault loader + chokidar watcher
+          v
+bastra-recall daemon (Node 20+, TypeScript)
+  - in-memory MiniSearch BM25 index
+  - optional in-memory EmbeddingIndex persisted at <vault>/.bastra/embeddings.json
+  - optional Auto-Related enrichment via embedding similarity
+  - local telemetry JSONL
+  - HTTP REST on 127.0.0.1:6723
+  - stdio MCP server
+          |
+          +--> direct stdio MCP clients
+          |
+          +--> mcp-forwarder stdio wrappers
+          |      - auto-spawn or reuse one shared daemon
+          |      - proxy MCP tool calls to HTTP REST
+          |
+          +--> hooks and non-MCP clients over HTTP
 ```
 
-## Layers
+The vault is the source of truth. Search indexes, embedding vectors, telemetry, audit logs, and trash files are derived/runtime data under `.bastra/` or the user log directory.
 
-### 1. Vault layer
+## Vault Layer
 
-- Path: `~/nexus-vault/` (configurable via `BASTRA_VAULT_PATH` env).
-- Format: plain `.md` files, one memory per file. YAML frontmatter, markdown body, `[[wikilinks]]` for cross-references.
-- Flat directory — no nested folders. The schema's `topic_path` provides the structuring axis.
-- The vault is **the source of truth**. The SQLite index is a derived cache — losing it must never lose data.
+`Vault` recursively scans the configured root from `BASTRA_VAULT_PATH` (legacy `NEXUS_VAULT_PATH` is still accepted). It loads only markdown files with a recognized `type` frontmatter value and silently ignores ordinary Obsidian notes.
 
-This guarantees:
-- Daniel can edit memorys in Obsidian directly. Watcher re-indexes within ~50ms.
-- Memorys survive bastra-recall being uninstalled. They're just markdown.
-- Cloud sync (iCloud, Dropbox, Syncthing, Git) works out of the box because it's a plain folder.
+Current write routing from `saveMemory`:
 
-### 2. Index layer
+| Memory kind | Folder |
+|---|---|
+| `type: bookmark` | `bookmarks/` |
+| `type: doc` | `dokumentationen/<scope>/` |
+| `scope: user-preference` | `memories/user/` |
+| `scope: all-projects` | `memories/all-projects/` |
+| other scopes | `memories/projects/<scope>/` |
 
-SQLite at `~/.bastra/index.db`, with FTS5 enabled.
+The scanner is recursive, so older flat vaults and hand-organized Obsidian folders continue to work.
 
-#### Tables
+The watcher uses `chokidar`. On paths that look like cloud-storage mounts (`CloudStorage`, `Dropbox`, `iCloud`), it switches to polling because native file events are unreliable there. Write paths call `vault.reindexFile(...)` after known writes so a save and a recall in the same turn stay consistent.
 
-```sql
--- core memory record (mirrors frontmatter + body)
-CREATE TABLE memorys (
-  id            TEXT PRIMARY KEY,
-  title         TEXT NOT NULL,
-  type          TEXT NOT NULL,
-  summary       TEXT NOT NULL,
-  scope         TEXT NOT NULL,
-  source        TEXT,
-  confidence    REAL DEFAULT 1.0,
-  body_md       TEXT NOT NULL,
-  file_path     TEXT NOT NULL,
-  file_mtime    INTEGER NOT NULL,
-  created_at    TEXT NOT NULL,
-  updated_at    TEXT NOT NULL,
-  obsolete      INTEGER DEFAULT 0
-);
+## Search And Recall
 
--- topic_path stored as a normalized path string ("/css/input/focus")
--- + a separate row per ancestor for prefix queries
-CREATE TABLE memory_topics (
-  memory_id     TEXT NOT NULL,
-  topic_path    TEXT NOT NULL,           -- full path
-  topic_prefix  TEXT NOT NULL,           -- ancestor for prefix matching
-  PRIMARY KEY (memory_id, topic_prefix),
-  FOREIGN KEY (memory_id) REFERENCES memorys(id) ON DELETE CASCADE
-);
+The current index is in-memory MiniSearch BM25, not SQLite/FTS5. The searched fields are:
 
--- flat tags
-CREATE TABLE memory_tags (
-  memory_id     TEXT NOT NULL,
-  tag           TEXT NOT NULL,
-  PRIMARY KEY (memory_id, tag),
-  FOREIGN KEY (memory_id) REFERENCES memorys(id) ON DELETE CASCADE
-);
+- `recall_when` with the highest boost
+- `title`
+- `tags`
+- `topic_path`
+- `summary`
+- markdown body
 
--- recall_when patterns
-CREATE TABLE memory_recall_patterns (
-  memory_id     TEXT NOT NULL,
-  pattern       TEXT NOT NULL,
-  FOREIGN KEY (memory_id) REFERENCES memorys(id) ON DELETE CASCADE
-);
+`recall(query, opts)` returns direct BM25 hits filtered by:
 
--- graph edges (typed, weighted)
-CREATE TABLE memory_relations (
-  from_id       TEXT NOT NULL,
-  to_id         TEXT NOT NULL,
-  relation      TEXT NOT NULL DEFAULT 'related',  -- related | replaces | superseded_by | derives-from
-  weight        REAL DEFAULT 1.0,
-  PRIMARY KEY (from_id, to_id, relation),
-  FOREIGN KEY (from_id) REFERENCES memorys(id) ON DELETE CASCADE,
-  FOREIGN KEY (to_id) REFERENCES memorys(id) ON DELETE CASCADE
-);
+- `obsolete !== true`
+- optional exact `scope`
+- optional exact `type`
+- `sensitivity !== private` unless `allow_private: true`
 
--- FTS5 over searchable text
-CREATE VIRTUAL TABLE memorys_fts USING fts5(
-  memory_id UNINDEXED,
-  title,
-  summary,
-  body_md,
-  tags_flat,           -- space-joined tag list
-  recall_patterns_flat,
-  tokenize = 'porter unicode61'
-);
+It then applies staleness reranking based on lifecycle fields such as `valid_until`, `expires_after_days`, and `last_reviewed_at`.
 
--- telemetry
-CREATE TABLE recall_log (
-  ts                  TEXT NOT NULL,
-  query               TEXT NOT NULL,
-  context_json        TEXT,
-  top_hits_json       TEXT NOT NULL,
-  claude_loaded       INTEGER DEFAULT 0,
-  surface             TEXT
-);
+### Hybrid Recall
 
-CREATE TABLE save_log (
-  ts                  TEXT NOT NULL,
-  memory_id           TEXT NOT NULL,
-  trigger             TEXT,
-  was_autonomous      INTEGER NOT NULL,
-  surface             TEXT
-);
-```
+Embeddings are optional. `BASTRA_EMBEDDING_PROVIDER` controls the provider:
 
-#### Why SQLite + FTS5, not a graph DB
+| Value | Behavior |
+|---|---|
+| `none` | disable embeddings |
+| `ollama` | use local Ollama `/v1/embeddings` |
+| `openai` | use OpenAI embeddings with `OPENAI_API_KEY` or `BASTRA_EMBEDDING_KEY` |
+| unset + API key | use OpenAI for backwards compatibility |
+| unset + no API key | BM25 only |
 
-For the working scale (low thousands of memorys, kilobytes per memory), SQLite is faster, simpler, and more robust than Neo4j or Kuzu. Graph traversal is one recursive CTE away. We get:
+When an `EmbeddingIndex` is attached, `recallHybrid(...)` combines BM25 and vector rankings with Reciprocal Rank Fusion. Vectors are stored as base64-encoded floats in `<vault>/.bastra/embeddings.json`.
 
-- Embedded — no separate process to manage
-- ACID — corruption-resistant
-- FTS5 built-in — no separate search engine
-- Battle-tested across every OS
+### Multi-Hop Recall
 
-A graph DB would add operational complexity for capability we don't need.
+If `expand_hops: 1` is passed, recall adds one-hop neighbors from `frontmatter.related_via`. Those neighbors are filtered with the same obsolete/scope/type/sensitivity rules and receive a reduced score.
 
-#### Why no embeddings in v0
+`RelatedEnricher` can maintain `related_via` automatically after embedding batches. It also appends an auto-managed Obsidian wikilink section to the memory body, bounded by marker comments so manual links and automatic links stay separate.
 
-`recall_when` patterns + FTS5 cover keyword and substring matching. Embeddings (e.g. `bge-m3` local, ~500 MB) become valuable when:
+## Daemon And Transports
 
-- Patterns can't anticipate all phrasings of a context, AND
-- Keyword matching demonstrably misses real cases
+The main daemon is `packages/daemon/src/index.ts`.
 
-We measure this in the Dogfood week. If recall accuracy < 70%, embeddings move into v0.5. Until then, the storage cost and install friction aren't justified.
+It starts:
 
-### 3. Daemon layer
+- one `Vault`
+- one `SearchIndex`
+- optional `EmbeddingIndex`
+- optional `RelatedEnricher`
+- one `Telemetry` instance
+- HTTP REST server on `127.0.0.1:6723` by default
+- stdio MCP server in the same process
 
-A single TypeScript process (`bastra-recall serve`) running as a user-level daemon.
+HTTP can be disabled with `BASTRA_HTTP=off`. The port defaults to `6723` and can be changed with `BASTRA_HTTP_PORT` (legacy `NEXUS_HTTP_PORT` is accepted).
 
-#### Lifecycle
+### MCP Forwarder
 
-- Mac: launched via `launchd` plist at `~/Library/LaunchAgents/com.bastra-recall.daemon.plist`. Auto-starts at login, restarts on crash.
-- Listens on `localhost:7891` (HTTP) for web/chat surfaces.
-- Exposes stdio via a separate small wrapper binary (`bastra-recall-stdio`) that proxies stdin/stdout to a local socket — Claude Code and Desktop spawn this wrapper as their MCP server config.
+`bastra-recall-mcp` is a thin stdio MCP wrapper. It does not load the vault or hold an index. It:
 
-This means: **one process holds the index in memory**, every surface talks to it, no duplication.
+1. probes `GET /health` on `BASTRA_DAEMON_URL` (default `http://127.0.0.1:6723`);
+2. auto-spawns the daemon unless `BASTRA_FORWARDER_SPAWN=0`;
+3. exposes MCP tools over stdio;
+4. proxies each tool call to `/api/v1/<tool>`.
 
-#### Tools exposed via MCP (same set on stdio and HTTP)
+This lets multiple MCP clients share a single daemon, index, embedding queue, and telemetry stream.
 
-```typescript
-// tool: recall
-{
-  query: string,                       // free-form query OR action context
-  context?: {
-    project?: string,                  // current project name
-    surface?: string,                  // "claude-code" | "claude-desktop" | ...
-    intent?: string,                   // "creating component" | "writing css" | …
-  },
-  k?: number,                          // top-k, default 3
-  scope_filter?: string[],             // restrict to scopes
-}
-// returns: [{ id, title, summary, score, scope, topic_path }]
+## Tools
 
-// tool: load_memory
-{ id: string }
-// returns: full memory (frontmatter + body)
+Core memory tools:
 
-// tool: save_memory
-{
-  title, type, summary, topic_path, tags, scope,
-  recall_when: string[],
-  body_md: string,
-  related?: string[],
-  source?: string,
-  confidence?: number,
-  trigger?: "user-explicit" | "autonomous-frustration" | "autonomous-resolution" | "autonomous-decision",
-}
-// returns: { id, file_path }
+| Tool | Purpose |
+|---|---|
+| `recall` | Search memories by action context or natural-language query |
+| `load_memory` | Load full frontmatter and body by id |
+| `save_memory` | Write a new or overwritten memory markdown file and force reindex |
 
-// tool: list_memorys
-{ scope?: string, type?: string, tag?: string, limit?: number }
-// returns: [{ id, title, summary, type, scope, updated_at }]
+Document read tools:
 
-// tool: link_memorys
-{ from: string, to: string, relation?: string, weight?: number }
-// returns: { ok: true }
+| Tool | Purpose |
+|---|---|
+| `find_document` | Search `type: doc` sidecars |
+| `read_document` | Load document sidecar metadata and extracted body |
+| `open_document` | macOS-only open of the original file or sidecar |
 
-// tool: update_memory  (rare — for confidence bumps, obsolescence, supersedes)
-{ id, patch: { confidence?, obsolete?, superseded_by?, ... } }
-// returns: full updated memory
-```
+Document write tools are gated by `BASTRA_DOCUMENT_WRITE=1`:
 
-#### Trigger hooks (separate from MCP tools)
+| Tool | Purpose |
+|---|---|
+| `save_document` | Copy or link an original file and write a retrievable sidecar |
+| `recategorize_document` | Update title, tags, category, or folder metadata |
+| `move_document` | Move sidecar and original file to another document folder |
 
-Hooks run as small shell scripts that POST to the daemon's REST endpoint. They're not exposed as MCP tools — they fire automatically on Claude Code events.
+The direct daemon only lists document write tools when the env flag is enabled. The forwarder may list them and let the daemon return the gate error on call.
 
-| Event | Hook | Daemon endpoint | Purpose |
-|---|---|---|---|
-| `SessionStart` | `session-start.sh` | `POST /hook/session-start` | Inject session-start memorys (preferences, current project facts) |
-| `UserPromptSubmit` | `user-prompt-submit.sh` | `POST /hook/user-prompt` | Stage-1 recall on user prompt |
-| `PreToolUse` (Write/Edit) | `pre-write.sh` | `POST /hook/pre-write` | Stage-1 recall on the *content about to be written* (e.g. detect `<input` → recall input lessons) |
-| `Stop` | `stop.sh` | `POST /hook/stop` | Evaluate whether the session contained a save-worthy moment; if so, prompt Claude to save in next turn |
+## HTTP REST
 
-The PreToolUse hook is what makes "buildin"-feel possible: I recall **before my own action**, not only on user input.
+The HTTP server binds to loopback only. Main endpoints:
 
-### 4. Surface adapters
-
-| Surface | Transport | Setup |
+| Endpoint | Method | Purpose |
 |---|---|---|
-| Claude Code | stdio MCP via wrapper | Add to `~/.claude.json` mcpServers: `bastra-recall: { command: "bastra-recall-stdio" }` |
-| Claude Desktop | stdio MCP via wrapper | Same wrapper, configured in Desktop's MCP settings |
-| Claude.ai (web/chat/projects) | HTTP MCP via Custom Connector | User adds a Custom Connector pointing to `http://localhost:7891/mcp`. Browser-extension or local proxy may be needed for HTTPS. |
-| Co-work | HTTP MCP | Same as above |
+| `/health` | `GET` | daemon health, version, vault size |
+| `/hook/recall` | `POST` | Claude Code PreToolUse hook recall path |
+| `/api/v1/recall` | `POST` | REST wrapper for `recall` |
+| `/api/v1/load_memory` | `POST` | REST wrapper for `load_memory` |
+| `/api/v1/save_memory` | `POST` | REST wrapper for `save_memory` |
+| `/api/v1/find_document` | `POST` | REST wrapper for `find_document` |
+| `/api/v1/read_document` | `POST` | REST wrapper for `read_document` |
+| `/api/v1/open_document` | `POST` | REST wrapper for `open_document` |
+| `/api/v1/save_document` | `POST` | gated document write |
+| `/api/v1/recategorize_document` | `POST` | gated document write |
+| `/api/v1/move_document` | `POST` | gated document write |
 
-The user's perspective: same tools (`recall`, `save_memory`, etc.) appear in every surface. Same vault. Same memory.
+If `BASTRA_API_TOKEN` is set, `/api/v1/*` requires `Authorization: Bearer <token>`. Loopback callers bypass auth by default; set `BASTRA_AUTH_LOOPBACK_SKIP=0` to require the token even locally.
 
-## Retrieval pipeline (recall)
+CORS defaults to `Access-Control-Allow-Origin: *` and can be restricted with `BASTRA_CORS_ORIGIN`.
 
-When `recall(query, context)` is called:
+## Hooks
 
-```
-1. Build candidate set
-   a. FTS5 full-text query over (title, summary, body, tags, recall_patterns)
-   b. Plus: any memory whose recall_when patterns substring-match query/context
-   c. Plus: top neighbors of any candidate via memory_relations (1-hop graph expansion)
-   → ~20-50 candidates
+Claude Code hooks call the loopback daemon and are designed to fail open so they do not block the assistant.
 
-2. Score each candidate
-   score = w_fts * fts_score
-         + w_topic * topic_path_overlap(query_tokens, mem.topic_path)
-         + w_recall_when * recall_pattern_match(context, mem.recall_when)
-         + w_scope * scope_match(context.project, mem.scope)
-         + w_recency * recency_decay(mem.updated_at)
-         + w_confidence * mem.confidence
-         - w_obsolete * mem.obsolete
+Current live hook binaries:
 
-3. Filter
-   - Remove obsolete memorys (unless explicitly asked)
-   - Apply scope filter (e.g., scope is "carnexus" but project is "carview" AND scope_match=0 → drop)
-   - Drop below threshold (default 0.3)
-
-4. Return top-k with scores
-```
-
-Weights start as constants, get tuned during the Dogfood week from `recall_log` data (which hits Claude actually loaded vs ignored).
-
-## Save pipeline (autonomous)
-
-See `triggers.md` for when. The mechanics:
-
-```
-1. Claude calls save_memory(payload)
-2. Daemon validates against schema (memory-schema.md)
-3. Daemon writes <id>.md to vault
-4. chokidar fires → re-index
-5. Daemon logs to save_log (ts, id, trigger, was_autonomous)
-6. Daemon optionally returns "1-line ack" string for Claude to surface to user:
-   "→ saved memory: <title>"
-```
-
-That ack string is what Daniel sees. It's the audit trail — the "I noticed this and remembered it" signal that builds trust in the system.
-
-## Privacy
-
-- Vault is local. Nothing leaves the Mac unless Daniel explicitly enables sync.
-- The daemon binds to `localhost` only — no LAN exposure.
-- Telemetry (`recall_log`, `save_log`) is local-only, never phoned home.
-- Claude.ai web Connectors require HTTPS in many configs; a local mTLS or Tailscale-funnel option will be evaluated in v0.5.
-
-## Stack summary
-
-| Layer | Choice | Why |
+| Binary | Event | Purpose |
 |---|---|---|
-| Language | TypeScript (Node 20+) | Matches MCP ecosystem; @modelcontextprotocol/sdk is first-class TS |
-| DB | SQLite via `better-sqlite3` | Embedded, sync API, FTS5 built-in |
-| HTTP | Hono | Tiny, fast, web-standard Request/Response, easy to test |
-| File watcher | chokidar | Standard, robust on macOS |
-| MCP server | `@modelcontextprotocol/sdk` | Official, supports both stdio and SSE/streaming HTTP |
-| Markdown parser | `gray-matter` + `remark` | Frontmatter + AST for body manipulation |
-| Process supervisor | `launchd` (Mac) | Native, restart-on-crash, auto-start at login |
-| Distribution | Homebrew tap (Mac-first) | Daniel-relevant; npm package as fallback |
+| `bastra-recall-hook` | `PreToolUse` | detect file/content topics before Write/Edit/MultiEdit/NotebookEdit and inject recall hints |
+| `bastra-recall-session-hook` | `SessionStart` | preload user preferences, cross-project rules, and project memories at startup/resume/clear/compact |
 
-## Out of scope for v0
+Topic detection is deterministic and based on file extension, path segments, and content patterns. The hook sends a bounded natural-language query to `/hook/recall`.
 
-- Embeddings (semantic search) — moves to v0.5 if Dogfood data demands it
-- Codebase indexing (AST, topology maps) — separate "Phase 2", not blocking memory MVP
-- Multi-Mac sync — vault is a folder, deferred to user's choice (iCloud/Dropbox/Git)
-- Web UI — Obsidian *is* the UI for browsing/editing
-- Team-sharing, SaaS — only after solo dogfood proves value
+## Privacy And Safety
+
+- The daemon binds to `127.0.0.1`.
+- The vault is plain local markdown.
+- `sensitivity: private` memories are hidden from external MCP/REST callers unless an internal caller explicitly uses `allow_private: true`.
+- `load_memory` also enforces the sensitivity filter, so direct id enumeration cannot load private memories.
+- Telemetry is local JSONL and can be disabled with `BASTRA_TELEMETRY=off`.
+- Save/delete/restore operations used by the Mac-app bridge can be recorded in `<vault>/.bastra/audit-log.ndjson`.
+- Soft deletes move files to `<vault>/.bastra/trash/`.
+
+## Stack Summary
+
+| Layer | Current choice |
+|---|---|
+| Runtime | Node 20+, TypeScript, ESM |
+| MCP | `@modelcontextprotocol/sdk` |
+| Search | MiniSearch BM25 in memory |
+| Embeddings | Optional OpenAI or Ollama provider, in-memory vectors with JSON persistence |
+| Vault parsing | `gray-matter` + Zod frontmatter schema |
+| File watching | `chokidar` with polling on cloud mounts |
+| HTTP | Node `http` server |
+| CLI/install adapters | Claude Code, Claude Desktop, Cursor |
+
+## Historical Note
+
+Early design docs described a SQLite/FTS5 index and HTTP MCP on port `7891`. That is not the current implementation. The current code uses MiniSearch/BM25, optional embeddings, REST on `127.0.0.1:6723`, and MCP stdio/forwarder transports.

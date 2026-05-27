@@ -24,7 +24,13 @@ import {
   OpenAIEmbeddingProvider,
   OllamaEmbeddingProvider,
   RelatedEnricher,
+  pickPhrase,
+  banterModeFromEnv,
+  progressIndexFor,
+  RECALL_STAGE_ORDER,
   type EmbeddingProvider,
+  type RecallStage,
+  type StageListener,
 } from "@bastra-recall/core";
 import * as path from "node:path";
 import { Telemetry, logDirFor } from "./telemetry.js";
@@ -164,12 +170,49 @@ async function main(): Promise<void> {
   }));
 
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  // Banter-Lang: nutzt BASTRA_BANTER_LANG (de|en), default `en` —
+  // MCP-Clients sind heterogen, ein deutsches "Stichwörter durchforsten"
+  // im englischen Chat-Verlauf wirkt fremd. Deutsche Mac-App-User setzen
+  // BASTRA_BANTER_LANG=de in ihrer Shell oder dem Daemon-Launchd-Plist.
+  const banterMode = banterModeFromEnv(process.env);
+  const banterLang = (process.env.BASTRA_BANTER_LANG ?? "en").toLowerCase() === "de" ? "de" : "en";
+
+  server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
     const { name, arguments: args } = req.params;
 
     if (name === "recall") {
       try {
-        const result = await recallHandler(toolDeps, args);
+        // MCP-Progress-Notification (#38): wenn der Caller einen
+        // progressToken mitschickt, leiten wir Stage-Events als
+        // `notifications/progress` weiter. Claude Code rendert die als
+        // Live-Stage-Lines unter dem Tool-Aufruf. Banter-Phrase landet
+        // im `message`-Feld der Notification.
+        const progressToken = (req.params as { _meta?: { progressToken?: string | number } })._meta
+          ?.progressToken;
+        const onStage: StageListener | undefined = progressToken !== undefined
+          ? (s: RecallStage) => {
+              // Nur Stop-Events (mit durationMs) als Progress-Tick
+              // emittieren — Start-Events würden Claude Code mit
+              // doppelten Lines fluten.
+              if (s.durationMs === undefined && s.name !== "cache.hit" && s.name !== "done") return;
+              const phrase = pickPhrase(s, banterMode, banterLang);
+              const message = phrase
+                ? `${s.name} — ${phrase}${s.durationMs !== undefined ? ` (${s.durationMs}ms)` : ""}`
+                : `${s.name}${s.durationMs !== undefined ? ` (${s.durationMs}ms)` : ""}`;
+              // Fire-and-forget — Notification-Failures dürfen den
+              // Recall nicht kippen.
+              void extra.sendNotification({
+                method: "notifications/progress",
+                params: {
+                  progressToken,
+                  progress: progressIndexFor(s.name),
+                  total: RECALL_STAGE_ORDER.length,
+                  message,
+                },
+              }).catch(() => undefined);
+            }
+          : undefined;
+        const result = await recallHandler(toolDeps, args, { onStage });
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };

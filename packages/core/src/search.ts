@@ -3,6 +3,7 @@ import type { Memory } from "./schema.js";
 import type { Vault, VaultEvent } from "./vault.js";
 import type { EmbeddingIndex } from "./embeddings.js";
 import { fuseRRF } from "./embeddings.js";
+import type { RecallStage, StageListener } from "./recall-stages.js";
 
 export interface RecallHit {
   id: string;
@@ -37,6 +38,15 @@ export interface RecallOptions {
    * `hop: "1-hop"`.
    */
   expand_hops?: 0 | 1;
+  /**
+   * Stage-Event-Listener (#38). Wenn gesetzt, emittiert die Recall-
+   * Pipeline pro Schritt einen Start- + Stop-Event (`query.parse`,
+   * `bm25.search`, `vector.search`, `rrf.fuse`, `hops.expand`,
+   * `staleness.rank`, `done`). Bei Query-Cache-Hits feuert zusätzlich
+   * ein `cache.hit`-Event mit `meta.cache = "query"` — danach folgt
+   * direkt `done`. Null-Overhead, wenn nicht gesetzt.
+   */
+  onStage?: StageListener;
 }
 
 interface IndexDoc {
@@ -127,8 +137,20 @@ export class SearchIndex {
 
   recall(query: string, opts: RecallOptions = {}): RecallHit[] {
     const k = opts.k ?? 5;
-    if (!query.trim()) return [];
+    const stage = new StageEmitter(opts.onStage);
+    const recallStart = Date.now();
+
+    const tParse = stage.start("query.parse");
+    if (!query.trim()) {
+      stage.end("query.parse", tParse);
+      stage.emit("done", recallStart, { hit_count: 0, vault_size: this.mini.documentCount, total_ms: 0 });
+      return [];
+    }
+    stage.end("query.parse", tParse);
+
+    const tBm = stage.start("bm25.search");
     const raw = this.mini.search(query);
+    stage.end("bm25.search", tBm, { raw_hit_count: raw.length });
 
     const filtered = raw.filter((r) => {
       if (!passesRecallFilters(r, opts)) return false;
@@ -153,10 +175,26 @@ export class SearchIndex {
     }));
     const direct = directFull.slice(0, k);
 
-    const withHops = opts.expand_hops === 1
-      ? [...direct, ...this.collectOneHopNeighbors(directFull, opts, new Set(direct.map((h) => h.id))).slice(0, k)]
-      : direct;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    let withHops: RecallHit[];
+    if (opts.expand_hops === 1) {
+      const tHops = stage.start("hops.expand");
+      const neighbors = this.collectOneHopNeighbors(directFull, opts, new Set(direct.map((h) => h.id))).slice(0, k);
+      stage.end("hops.expand", tHops, { hop_count: neighbors.length });
+      withHops = [...direct, ...neighbors];
+    } else {
+      withHops = direct;
+    }
+
+    const tStale = stage.start("staleness.rank");
+    const ranked = applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    stage.end("staleness.rank", tStale, { reranked_count: ranked.length });
+
+    stage.emit("done", recallStart, {
+      hit_count: ranked.length,
+      vault_size: this.mini.documentCount,
+      total_ms: Date.now() - recallStart,
+    });
+    return ranked;
   }
 
   /** Hybrid-Recall: BM25 + Vector via Reciprocal-Rank-Fusion. Wenn kein
@@ -166,13 +204,25 @@ export class SearchIndex {
   async recallHybrid(query: string, opts: RecallOptions = {}): Promise<RecallHit[]> {
     if (!this.embeddings) return this.recall(query, opts);
     const k = opts.k ?? 5;
-    if (!query.trim()) return [];
+    const stage = new StageEmitter(opts.onStage);
+    const recallStart = Date.now();
+
+    const tParse = stage.start("query.parse");
+    if (!query.trim()) {
+      stage.end("query.parse", tParse);
+      stage.emit("done", recallStart, { hit_count: 0, vault_size: this.mini.documentCount, total_ms: 0 });
+      return [];
+    }
+    stage.end("query.parse", tParse);
 
     // BM25 — top 50 für RRF-Pool.
+    const tBm = stage.start("bm25.search");
     const bm25 = this.mini.search(query).filter((r) => passesRecallFilters(r, opts));
     const bm25Top = bm25.slice(0, 50);
+    stage.end("bm25.search", tBm, { raw_hit_count: bm25.length });
 
     // Vector — top 50 für RRF-Pool, plus type/scope/sensitivity-Filter über vault.
+    const tVec = stage.start("vector.search");
     const vec = await this.embeddings.search(query, 100);
     const vectorTop = vec
       .map((h) => ({ hit: h, mem: this.vault.get(h.id) }))
@@ -190,7 +240,9 @@ export class SearchIndex {
         return true;
       })
       .slice(0, 50);
+    stage.end("vector.search", tVec, { vector_hit_count: vectorTop.length });
 
+    const tFuse = stage.start("rrf.fuse");
     const bm25Ids = bm25Top.map((r) => r.id as string);
     const vectorIds = vectorTop.map(({ hit }) => hit.id);
     const fused = fuseRRF(bm25Ids, vectorIds);
@@ -226,11 +278,29 @@ export class SearchIndex {
         hop: "direct" as const,
       });
     }
+    stage.end("rrf.fuse", tFuse, { fused_count: outFull.length });
+
     const out = outFull.slice(0, k);
-    const withHops = opts.expand_hops === 1
-      ? [...out, ...this.collectOneHopNeighbors(outFull, opts, new Set(out.map((h) => h.id))).slice(0, k)]
-      : out;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    let withHops: RecallHit[];
+    if (opts.expand_hops === 1) {
+      const tHops = stage.start("hops.expand");
+      const neighbors = this.collectOneHopNeighbors(outFull, opts, new Set(out.map((h) => h.id))).slice(0, k);
+      stage.end("hops.expand", tHops, { hop_count: neighbors.length });
+      withHops = [...out, ...neighbors];
+    } else {
+      withHops = out;
+    }
+
+    const tStale = stage.start("staleness.rank");
+    const ranked = applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    stage.end("staleness.rank", tStale, { reranked_count: ranked.length });
+
+    stage.emit("done", recallStart, {
+      hit_count: ranked.length,
+      vault_size: this.mini.documentCount,
+      total_ms: Date.now() - recallStart,
+    });
+    return ranked;
   }
 
   /**
@@ -362,6 +432,45 @@ function passesRecallFilters(
 
 function round(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+// MARK: - Stage-Event-Emitter (#38)
+
+/**
+ * Hilfsklasse für Stage-Events in `recall` / `recallHybrid`. Hält den
+ * optionalen Listener und liefert `start()`/`end()`/`emit()`. Bei
+ * fehlendem Listener sind alle Methoden no-op und allokationsfrei
+ * (kein `Date.now()` ohne Bedarf). Die Klasse lebt nur in `search.ts`,
+ * weil sie tight an die Stage-Sequenz gekoppelt ist — die public Types
+ * stehen in `recall-stages.ts`.
+ */
+class StageEmitter {
+  constructor(private readonly listener?: StageListener) {}
+
+  /** Start-Event feuern. Liefert den Start-Timestamp, der unverändert
+   *  an `end()` zurückgegeben wird (so muss der Caller kein lokales
+   *  `const t = Date.now()` aufmachen). */
+  start(name: RecallStage["name"], meta?: Record<string, unknown>): number {
+    if (!this.listener) return 0;
+    const t = Date.now();
+    this.listener({ name, startedAtMs: t, meta });
+    return t;
+  }
+
+  /** Stop-Event feuern. `startedAt` ist der Rückgabewert von `start()`. */
+  end(name: RecallStage["name"], startedAt: number, meta?: Record<string, unknown>): void {
+    if (!this.listener) return;
+    const dur = Date.now() - startedAt;
+    this.listener({ name, startedAtMs: startedAt, durationMs: dur, meta });
+  }
+
+  /** One-shot-Event (kein separates Stop) — für `cache.hit`, `done`,
+   *  `error`. `startedAtMs` ist der „Recall-Start" (für `done`) oder
+   *  der Event-Zeitpunkt selbst. */
+  emit(name: RecallStage["name"], startedAtMs: number, meta?: Record<string, unknown>): void {
+    if (!this.listener) return;
+    this.listener({ name, startedAtMs, durationMs: Date.now() - startedAtMs, meta });
+  }
 }
 
 // MARK: - Lifecycle-Reranking (#74)

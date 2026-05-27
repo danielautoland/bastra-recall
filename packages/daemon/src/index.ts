@@ -55,6 +55,7 @@ import {
   moveDocument,
 } from "./documents-write-handler.js";
 import { envFirst, envInt, envFloat, envBool } from "./env.js";
+import { startBackgroundCheck } from "./update-check.js";
 
 // Triage Issue #24: Write-Tools sind Pro-Feature. Aktuelles Gate ist ein
 // env-Flag — wenn ein Pro-License-Service kommt, ersetzt der das hier.
@@ -118,6 +119,10 @@ async function main(): Promise<void> {
         console.error(`[bastra-recall] embeddings start error: ${err}`);
       });
   }
+
+  // Update-check (fire-and-forget, opt-out via BASTRA_UPDATE_CHECK=off).
+  // Caches result on disk for 24h → no GitHub-API hit on every daemon restart.
+  startBackgroundCheck(DAEMON_VERSION);
 
   const telemetry = new Telemetry();
   if (telemetry.isEnabled()) {

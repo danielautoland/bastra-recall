@@ -7,28 +7,42 @@
  * Pipeline:
  *   stdin (JSON Claude-Code hook payload)
  *     → filter to PreToolUse on Write/Edit/MultiEdit/NotebookEdit
- *     → detectTopics(file_path, content excerpt) → query
+ *     → SKIP-GATE: extension/basename filter (#20) — drops .md outside docs/,
+ *       issue/PR transient files, .txt/.log/.tmp, etc. — BEFORE any module
+ *       load.
+ *     → lazy-import `@bastra-recall/core` (#28) for detectTopics/Project etc.
  *     → POST 127.0.0.1:BASTRA_HTTP_PORT/hook/recall
+ *     → per-session dedup (#32): drop hits shown >= 3 times within 4h
+ *       (unless load_memory marker is newer than last show)
  *     → format hits as <recall-hints>…</recall-hints>
  *     → stdout: {"hookSpecificOutput": { hookEventName, additionalContext }}
  *
  * Discipline:
  *   - Hard wall-clock budget: HOOK_TIMEOUT_MS. We MUST exit fast and
  *     never block Claude — any failure path emits `{}` and exits 0.
- *   - No persistent state. No vault read. We only know the daemon URL.
+ *   - Skip-gate runs on pure stdlib so the cheap path stays < 30 ms.
  *   - Telemetry is best-effort and never blocks the response.
  */
-import { detectTopics, detectProject, extractContentExcerpt, type ToolIntent } from "@bastra-recall/core";
 import { request } from "node:http";
 import { appendFile, mkdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { envFirst, envInt } from "./env.js";
 import { defaultLogDir } from "./telemetry.js";
+import { shouldSkipPath } from "./hook-skip.js";
+import {
+  bumpShown,
+  cleanupOldStates,
+  getLoadedMarkerMtime,
+  loadSessionState,
+  saveSessionState,
+  shouldDropHit,
+  type SessionState,
+} from "./session-state.js";
 
 const HOOK_TIMEOUT_MS = envInt("BASTRA_HOOK_TIMEOUT_MS", 250, "NEXUS_HOOK_TIMEOUT_MS");
 const DEFAULT_PORT = 6723;
-const HOOK_VERSION = "0.2.0";
+const HOOK_VERSION = "0.3.0";
 const SCORE_FLOOR = 30; // mirror SKILL.md: <30 is noise
 const MUST_LOAD_SCORE = 100; // hits at/above this are non-negotiable loads
 
@@ -56,6 +70,8 @@ interface RecallResponse {
   recall_id: string;
 }
 
+type HookStatus = "ok" | "no-hits" | "skipped" | "daemon-unreachable" | "timeout" | "error";
+
 const SUPPORTED_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 
 async function main(): Promise<void> {
@@ -79,7 +95,36 @@ async function main(): Promise<void> {
   const filePath = typeof toolInput.file_path === "string" ? toolInput.file_path : null;
   if (!filePath) return emitEmpty();
 
-  const intent: ToolIntent = {
+  // 3) SKIP-GATE (#20 + #28): extension/basename filter on pure stdlib.
+  //    Runs BEFORE any @bastra-recall/core import so the cheap path stays
+  //    well under the budget.
+  if (shouldSkipPath(filePath, payload.cwd)) {
+    emitEmpty();
+    await writeTelemetry({
+      session_id: payload.session_id ?? null,
+      tool_name: toolName,
+      file_path: filePath,
+      topics: [],
+      query_chars: 0,
+      daemon_url: "",
+      daemon_reachable: false,
+      hint_count: 0,
+      required_count: 0,
+      top_score: null,
+      latency_ms_total: Date.now() - startedAt,
+      dropped_dedup_count: 0,
+      status: "skipped",
+      error: null,
+    });
+    return;
+  }
+
+  // 4) Now (and only now) load the expensive core utils — see #28.
+  const { detectTopics, detectProject, extractContentExcerpt } = await import(
+    "@bastra-recall/core"
+  );
+
+  const intent = {
     tool_name: toolName,
     file_path: filePath,
     content_excerpt: extractContentExcerpt(toolName, toolInput),
@@ -92,9 +137,9 @@ async function main(): Promise<void> {
   const url = httpURL ?? `http://127.0.0.1:${httpPort}`;
   const remainingMs = Math.max(50, HOOK_TIMEOUT_MS - (Date.now() - startedAt));
 
-  // 3) Call daemon. Any failure → silent skip.
+  // 5) Call daemon. Any failure → silent skip.
   let resp: RecallResponse | null = null;
-  let status: "ok" | "no-hits" | "daemon-unreachable" | "timeout" | "error" = "ok";
+  let status: HookStatus = "ok";
   let errMsg: string | null = null;
   try {
     resp = await postRecall(url, {
@@ -116,23 +161,55 @@ async function main(): Promise<void> {
     }
   }
 
-  const requiredHits: RecallHit[] = [];
-  const optionalHits: RecallHit[] = [];
+  // 6) Score-floor filter.
+  const filteredHits: RecallHit[] = [];
   if (resp && Array.isArray(resp.hits)) {
     for (const h of resp.hits) {
       if (h.score < SCORE_FLOOR) continue;
-      if (h.score >= MUST_LOAD_SCORE) requiredHits.push(h);
-      else optionalHits.push(h);
+      filteredHits.push(h);
     }
+  }
+
+  // 7) Per-session dedup (#32). Load state, drop over-shown hits, bump
+  //    counters for those we actually emit. Best-effort throughout — no
+  //    error in this section ever blocks the response.
+  const sessionId = payload.session_id ?? "";
+  let sessionState: SessionState = { shown: {} };
+  let dedupActive = false;
+  if (sessionId) {
+    sessionState = await loadSessionState(sessionId);
+    dedupActive = true;
+  }
+
+  const survivingHits: RecallHit[] = [];
+  let droppedDedupCount = 0;
+  for (const h of filteredHits) {
+    if (!dedupActive) {
+      survivingHits.push(h);
+      continue;
+    }
+    const entry = sessionState.shown[h.id];
+    const loadedMtime = await getLoadedMarkerMtime(h.id);
+    if (shouldDropHit(entry, loadedMtime)) {
+      droppedDedupCount++;
+      continue;
+    }
+    survivingHits.push(h);
+  }
+
+  const requiredHits: RecallHit[] = [];
+  const optionalHits: RecallHit[] = [];
+  for (const h of survivingHits) {
+    if (h.score >= MUST_LOAD_SCORE) requiredHits.push(h);
+    else optionalHits.push(h);
   }
 
   const totalHints = requiredHits.length + optionalHits.length;
   if (resp && totalHints === 0) status = "no-hits";
 
-  const totalMs = Date.now() - startedAt;
   const topScore = resp?.hits?.[0]?.score ?? null;
 
-  // 4) Emit Claude-Code hookSpecificOutput first — that's the hot path.
+  // 8) Emit Claude-Code hookSpecificOutput first — that's the hot path.
   if (totalHints === 0) {
     emitEmpty();
   } else {
@@ -147,8 +224,25 @@ async function main(): Promise<void> {
     );
   }
 
-  // 5) Telemetry — awaited so process.exit doesn't kill the appendFile.
+  // 9) Bump shown-counts for everything we surfaced, then persist.
+  if (dedupActive && survivingHits.length > 0) {
+    const now = Date.now();
+    for (const h of survivingHits) bumpShown(sessionState, h.id, now);
+    await saveSessionState(sessionId, sessionState);
+  }
+
+  // 10) Opportunistic cleanup of stale session files. Only when we actually
+  //     touched the state dir — keeps the cheap/skip path clean.
+  if (dedupActive) {
+    // fire-and-forget; never await failures
+    void cleanupOldStates().catch(() => {});
+  }
+
+  const totalMs = Date.now() - startedAt;
+
+  // 11) Telemetry — awaited so process.exit doesn't kill the appendFile.
   await writeTelemetry({
+    session_id: sessionId || null,
     tool_name: toolName,
     file_path: filePath,
     topics: topics.topics,
@@ -159,6 +253,7 @@ async function main(): Promise<void> {
     required_count: requiredHits.length,
     top_score: topScore,
     latency_ms_total: totalMs,
+    dropped_dedup_count: droppedDedupCount,
     status,
     error: errMsg,
   });
@@ -276,6 +371,7 @@ function postRecall(
 }
 
 interface HookCallTelemetry {
+  session_id: string | null;
   tool_name: string;
   file_path: string | null;
   topics: string[];
@@ -286,7 +382,8 @@ interface HookCallTelemetry {
   required_count: number;
   top_score: number | null;
   latency_ms_total: number;
-  status: "ok" | "no-hits" | "daemon-unreachable" | "timeout" | "error";
+  dropped_dedup_count: number;
+  status: HookStatus;
   error: string | null;
 }
 
@@ -296,12 +393,15 @@ async function writeTelemetry(payload: HookCallTelemetry): Promise<void> {
     const logDir = envFirst("BASTRA_LOG_PATH", "NEXUS_LOG_PATH") ?? defaultLogDir();
     await mkdir(logDir, { recursive: true });
     const ts = new Date().toISOString();
+    // The session_id from the Claude payload is now real session state —
+    // fall back to a synthetic UUID only if no payload session was given.
+    const { session_id: payloadSessionId, ...rest } = payload;
     const event = {
       kind: "hook_call",
       ts,
-      session_id: randomUUID(), // hook CLI is stateless; one event = one synthetic "session"
+      session_id: payloadSessionId ?? randomUUID(),
       hook_version: HOOK_VERSION,
-      ...payload,
+      ...rest,
     };
     const file = join(logDir, `events-${ts.slice(0, 10)}.jsonl`);
     await appendFile(file, JSON.stringify(event) + "\n", "utf8");
@@ -323,6 +423,3 @@ main()
     emitEmpty();
     process.exit(0);
   });
-
-// Suppress dirname warning (not used here; kept for parity with telemetry.ts re-export style).
-void dirname;

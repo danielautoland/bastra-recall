@@ -12,6 +12,7 @@
 import { z } from "zod";
 import { saveMemory, SaveMemoryInput, type Vault, type SearchIndex } from "@bastra-recall/core";
 import { Telemetry, fireAndForget } from "./telemetry.js";
+import { touchLoadedMarker } from "./session-state.js";
 
 export interface ToolDeps {
   vault: Vault;
@@ -146,6 +147,11 @@ export async function loadMemoryHandler(
   ) {
     throw new Error(`memory not found: ${parsed.data.id}`);
   }
+
+  // Reset-signal for the hook's per-session dedup (#32): touch a marker
+  // file so the next hook invocation knows the agent has consumed this
+  // memory and the dedup clock should restart.
+  fireAndForget(touchLoadedMarker(parsed.data.id));
 
   return {
     id: m.fm.id,

@@ -39,4 +39,5 @@ export interface ParsedArgs {
   vaultPath: string | null;
   showHelp: boolean;
   showVersion: boolean;
+  yes: boolean;
 }

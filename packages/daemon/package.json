@@ -31,7 +31,8 @@
     "smoke": "tsx scripts/smoke.ts",
     "smoke:telemetry": "tsx scripts/telemetry-smoke.ts",
     "backfill:related": "tsx scripts/backfill-related.ts",
-    "eval:robust": "tsx scripts/eval-stress.ts --slice all"
+    "eval:robust": "tsx scripts/eval-stress.ts --slice all",
+    "test:update": "tsx --test scripts/update-check.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",

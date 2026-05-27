@@ -66,6 +66,7 @@ import {
   recategorizeDocument,
   moveDocument,
 } from "./documents-write-handler.js";
+import { getUpdateState } from "./update-check.js";
 
 export interface HttpOptions {
   port: number;
@@ -119,10 +120,19 @@ export async function startHttpServer(opts: HttpOptions): Promise<HttpHandle> {
     }
 
     if (method === "GET" && url === "/health") {
+      const updateState = getUpdateState();
       sendJson(res, 200, {
         ok: true,
         vault_size: vault.size(),
         version,
+        update_available: updateState && updateState.hasUpdate
+          ? {
+              current: updateState.current,
+              latest: updateState.latest,
+              html_url: updateState.html_url,
+              published_at: updateState.published_at,
+            }
+          : null,
       });
       return;
     }

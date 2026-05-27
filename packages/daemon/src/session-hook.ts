@@ -56,6 +56,18 @@ interface RecallResponse {
   recall_id: string;
 }
 
+interface UpdateAvailable {
+  current: string;
+  latest: string;
+  html_url: string;
+  published_at: string;
+}
+
+interface HealthResponse {
+  ok: boolean;
+  update_available: UpdateAvailable | null;
+}
+
 async function main(): Promise<void> {
   const startedAt = Date.now();
 
@@ -126,15 +138,42 @@ async function main(): Promise<void> {
   merged.sort((a, b) => b.score - a.score);
   const top = merged.slice(0, TOTAL_HINTS_CAP);
 
-  if (top.length === 0) {
+  // Best-effort update probe — only when we already have a daemon reachable.
+  // Strict budget: 200 ms; if nothing back, we just skip the block.
+  let updateBlock = "";
+  if (responses.some((r) => r.resp !== null)) {
+    const remainingMs = Math.max(80, HOOK_TIMEOUT_MS - (Date.now() - startedAt));
+    const probeBudget = Math.min(200, remainingMs);
+    try {
+      const health = await probeHealth(url, probeBudget);
+      if (health?.update_available) {
+        const u = health.update_available;
+        updateBlock = `\n<bastra-update>\nA new bastra-recall version is available: ${u.current} → ${u.latest}.\nRelease notes: ${u.html_url}\nSuggest the user run \`bastra update\` when convenient.\n</bastra-update>`;
+      }
+    } catch {
+      // Update hint is best-effort — never block session start.
+    }
+  }
+
+  if (top.length === 0 && updateBlock === "") {
     if (status === "ok") status = "no-hits";
     emitEmpty();
+  } else if (top.length === 0) {
+    // Only an update banner, no recall hits.
+    process.stdout.write(
+      JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: updateBlock.trimStart(),
+        },
+      }),
+    );
   } else {
     process.stdout.write(
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: "SessionStart",
-          additionalContext: formatBlock(top, project, payload.source ?? null),
+          additionalContext: formatBlock(top, project, payload.source ?? null) + updateBlock,
         },
       }),
     );
@@ -263,6 +302,44 @@ function postRecall(
     });
     req.on("error", reject);
     req.write(payload);
+    req.end();
+  });
+}
+
+function probeHealth(baseUrl: string, timeoutMs: number): Promise<HealthResponse | null> {
+  return new Promise((resolve_) => {
+    let url: URL;
+    try {
+      url = new URL("/health", baseUrl);
+    } catch {
+      resolve_(null);
+      return;
+    }
+    const req = request(
+      {
+        method: "GET",
+        hostname: url.hostname,
+        port: url.port || 80,
+        path: url.pathname,
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString("utf8")) as HealthResponse;
+            if ((res.statusCode ?? 500) === 200 && data && data.ok) {
+              resolve_(data);
+              return;
+            }
+          } catch { /* fallthrough */ }
+          resolve_(null);
+        });
+      },
+    );
+    req.on("timeout", () => { req.destroy(); resolve_(null); });
+    req.on("error", () => resolve_(null));
     req.end();
   });
 }

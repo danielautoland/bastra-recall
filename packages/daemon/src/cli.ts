@@ -18,10 +18,9 @@ import {
   showVersion,
 } from "./cli/commands.js";
 import { cmdUpdate } from "./cli/update.js";
+import { maybeEmitUpdateHint } from "./cli/update-hint.js";
 
-async function main(): Promise<number> {
-  const args = parseArgs(process.argv.slice(2));
-
+async function dispatch(args: ReturnType<typeof parseArgs>): Promise<number> {
   if (args.showVersion) { showVersion(); return 0; }
   if (args.showHelp && !args.command) { showHelp(); return 0; }
   if (!args.command || args.command === "help") { showHelp(); return 0; }
@@ -36,6 +35,20 @@ async function main(): Promise<number> {
       process.stderr.write(`error: unknown command '${args.command}' — run 'bastra help'\n`);
       return 2;
   }
+}
+
+async function main(): Promise<number> {
+  const args = parseArgs(process.argv.slice(2));
+  const code = await dispatch(args);
+
+  // After every subcommand: optionally emit a dim update hint to stderr.
+  // Skip for `bastra update` itself (the user is already mid-update) and for
+  // help/version (low-noise commands; users hit them often).
+  const skipHint = args.command === "update" || args.command === "help" || args.command === "version" || args.showHelp || args.showVersion;
+  if (!skipHint) {
+    try { await maybeEmitUpdateHint(); } catch { /* never break the CLI over this */ }
+  }
+  return code;
 }
 
 main().then(

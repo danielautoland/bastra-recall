@@ -14,14 +14,17 @@
     "bastra-recall-mcp": "./dist/mcp-forwarder.js",
     "bastra-recall-bridge": "./dist/bridge.js",
     "bastra-recall-hook": "./dist/hook.js",
-    "bastra-recall-session-hook": "./dist/session-hook.js"
+    "bastra-recall-session-hook": "./dist/session-hook.js",
+    "bastra-recall-prompt-hook": "./dist/prompt-hook.js",
+    "bastra-recall-todo-hook": "./dist/todo-hook.js"
   },
   "main": "./dist/index.js",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "build": "tsc && chmod +x dist/index.js dist/mcp-forwarder.js dist/bridge.js dist/hook.js dist/session-hook.js dist/cli.js",
+    "build": "tsc && chmod +x dist/index.js dist/mcp-forwarder.js dist/bridge.js dist/hook.js dist/session-hook.js dist/prompt-hook.js dist/todo-hook.js dist/cli.js",
     "start": "node dist/index.js",
     "check:types": "tsc --noEmit",
+    "test": "tsx --test __tests__/**/*.test.ts",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:telemetry": "tsx scripts/telemetry-smoke.ts",
     "backfill:related": "tsx scripts/backfill-related.ts",

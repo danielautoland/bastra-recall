@@ -19,6 +19,36 @@ import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import type { Memory } from "./schema.js";
 import type { Vault, VaultEvent } from "./vault.js";
+import { EmbedCache, hashEmbedContent } from "./embed-cache.js";
+
+// ─── Tunables (env-overridable für load-tests / large-vault-bursts) ──
+
+/** Max gleichzeitige Embed-Batches in flight. Default 2.
+ *  Provider-Calls (OpenAI/Ollama) sind teils sehr fett — wir wollen
+ *  Burst-Schutz, aber nicht so streng dass Backfill ewig dauert. */
+const MAX_CONCURRENT_BATCHES = Math.max(
+  1,
+  Number(process.env.BASTRA_EMBED_MAX_CONCURRENT ?? "2"),
+);
+
+/** Queue-Länge ab der `enqueue()` ein kurzes Sleep einbaut, damit Aufrufer
+ *  (z.B. bulk-Import von 1000 Memories) blockieren bis die Queue abebbt. */
+const BACKPRESSURE_LIMIT = Math.max(
+  1,
+  Number(process.env.BASTRA_EMBED_BACKPRESSURE_LIMIT ?? "200"),
+);
+
+/** Stall-Dauer pro `enqueue()`-Call wenn queue über Limit. */
+const BACKPRESSURE_STALL_MS = Math.max(
+  0,
+  Number(process.env.BASTRA_EMBED_BACKPRESSURE_STALL_MS ?? "100"),
+);
+
+/** Polling-Interval für den Semaphore. */
+const SEMAPHORE_POLL_MS = Math.max(
+  1,
+  Number(process.env.BASTRA_EMBED_SEMAPHORE_POLL_MS ?? "50"),
+);
 
 // ─── Provider Interface ──────────────────────────────────────────
 
@@ -166,16 +196,31 @@ export class EmbeddingIndex {
   private processing = false;
   private persistTimer: NodeJS.Timeout | null = null;
   private embedListeners = new Set<EmbedListener>();
+  /** Anzahl gerade laufender Provider-Calls (Semaphore-Counter). */
+  private inFlight = 0;
+  /** Content-Hash-Cache — skipt Re-Embed bei unverändertem Content. */
+  private cache: EmbedCache;
 
   constructor(
     private readonly vault: Vault,
     private readonly provider: EmbeddingProvider,
     private readonly persistPath: string,
-  ) {}
+    cachePath?: string,
+  ) {
+    // Cache liegt neben persistPath: `<vault>/.bastra/embed-cache.json`
+    const resolvedCachePath =
+      cachePath ?? path.join(path.dirname(persistPath), "embed-cache.json");
+    this.cache = new EmbedCache(
+      resolvedCachePath,
+      provider.id,
+      provider.dim,
+    );
+  }
 
   /** Lädt persistierte Vectors, subscribed an vault.on, backfillt fehlende. */
   async start(): Promise<void> {
     await this.load();
+    await this.cache.load();
     this.detach = this.vault.on((e) => this.handle(e));
     for (const m of this.vault.list()) {
       if (!this.vectors.has(m.fm.id)) this.pendingQueue.add(m.fm.id);
@@ -317,10 +362,49 @@ export class EmbeddingIndex {
       if (this.vectors.delete(e.id)) {
         this.schedulePersist();
       }
+      // Cache-Eintrag löschen, damit ein späteres Re-Add tatsächlich
+      // wieder embedded wird (Cache würde sonst als „fresh" einschätzen).
+      if (this.cache.delete(e.id)) {
+        void this.cache.save();
+      }
       return;
     }
+    // Vault hat eine Change/Add gemeldet → in Queue stopfen. Den Cache NICHT
+    // invalidieren: der Hash-Vergleich beim nächsten Flush ist genau der
+    // Filter, der entscheidet ob wirklich re-embedded werden muss. Wenn der
+    // neue Content denselben Hash hat (z.B. unverändert oder nur kosmetische
+    // Whitespace-Edits in einem Feld das wir nicht hashen), bleibt der Cache-
+    // Eintrag fresh und der Provider-Call wird gespart.
     this.pendingQueue.add(e.memory.fm.id);
     void this.flushQueue();
+  }
+
+  /**
+   * Public Enqueue mit Backpressure. Wenn die Queue über `BACKPRESSURE_LIMIT`
+   * wächst, returnt ein Promise das nach `BACKPRESSURE_STALL_MS` resolvet —
+   * der Caller (z.B. bulk-Import) blockiert kurz und gibt der Queue Zeit,
+   * abzubauen.
+   *
+   * Wird nicht intern (von handle()) genutzt — Vault-Events sind selten
+   * genug, dass Backpressure dort overkill ist. Gedacht für externe
+   * Bulk-Producer (Backfill-Scripte, Bridge-RPC-Floods, Tests).
+   */
+  async enqueue(id: string): Promise<void> {
+    this.pendingQueue.add(id);
+    if (this.pendingQueue.size > BACKPRESSURE_LIMIT) {
+      await new Promise<void>((r) => setTimeout(r, BACKPRESSURE_STALL_MS));
+    }
+    void this.flushQueue();
+  }
+
+  /** Anzahl gerade laufender Provider-Calls (für Tests / Telemetry). */
+  inFlightCount(): number {
+    return this.inFlight;
+  }
+
+  /** Cache-Hits zu Beobachtungszwecken (Tests). */
+  cacheSize(): number {
+    return this.cache.size();
   }
 
   private async flushQueue(): Promise<void> {
@@ -328,6 +412,10 @@ export class EmbeddingIndex {
     this.processing = true;
     try {
       while (this.pendingQueue.size > 0) {
+        // Semaphore: warte bis ein In-Flight-Slot frei wird.
+        while (this.inFlight >= MAX_CONCURRENT_BATCHES) {
+          await new Promise<void>((r) => setTimeout(r, SEMAPHORE_POLL_MS));
+        }
         const batch = Array.from(this.pendingQueue).slice(0, 50);
         for (const id of batch) this.pendingQueue.delete(id);
         const memories = batch
@@ -336,16 +424,47 @@ export class EmbeddingIndex {
             (x): x is { id: string; m: Memory } => x.m !== undefined,
           );
         if (memories.length === 0) continue;
-        const texts = memories.map(({ m }) => buildEmbedText(m));
+
+        // Content-Hash-Cache: Items rausfiltern deren Hash sich nicht geändert
+        // hat UND deren Vector noch in Memory liegt. Wenn der Vector fehlt
+        // (z.B. nach Cache-Hit beim Cold-Start ohne Vectors), trotzdem embed.
+        const toEmbed: { id: string; m: Memory; hash: string }[] = [];
+        const skipped: { id: string }[] = [];
+        for (const { id, m } of memories) {
+          const hash = hashEmbedContent(m);
+          if (this.cache.isFresh(id, hash) && this.vectors.has(id)) {
+            skipped.push({ id });
+          } else {
+            toEmbed.push({ id, m, hash });
+          }
+        }
+        if (skipped.length > 0) {
+          // Listener trotzdem benachrichtigen — der RelatedEnricher will
+          // wissen, dass das Memory "fresh genug" ist, auch wenn wir nicht
+          // re-embedded haben.
+          for (const { id } of skipped) {
+            for (const listener of this.embedListeners) {
+              try {
+                listener(id);
+              } catch (err) {
+                console.error("[bastra.embeddings] embed listener error:", err);
+              }
+            }
+          }
+        }
+        if (toEmbed.length === 0) continue;
+
+        const texts = toEmbed.map(({ m }) => buildEmbedText(m));
+        this.inFlight++;
         try {
           const vectors = await this.provider.embed(texts);
-          for (let i = 0; i < memories.length; i++) {
-            this.vectors.set(memories[i].id, vectors[i]);
+          for (let i = 0; i < toEmbed.length; i++) {
+            this.vectors.set(toEmbed[i].id, vectors[i]);
+            this.cache.set(toEmbed[i].id, toEmbed[i].hash);
           }
           this.schedulePersist();
-          // Subscriber (z.B. RelatedEnricher) post-batch benachrichtigen.
-          // Listener-Errors dürfen den embed-Loop nie aufhalten.
-          for (const { id } of memories) {
+          void this.cache.save();
+          for (const { id } of toEmbed) {
             for (const listener of this.embedListeners) {
               try {
                 listener(id);
@@ -358,8 +477,10 @@ export class EmbeddingIndex {
           console.error("[bastra.embeddings] batch error, requeue:", err);
           // Bei Fehler: Items zurück in queue für Retry beim nächsten Add-Event
           // oder Restart. Wir brechen den loop ab um Retry-Storm zu vermeiden.
-          for (const { id } of memories) this.pendingQueue.add(id);
+          for (const { id } of toEmbed) this.pendingQueue.add(id);
           break;
+        } finally {
+          this.inFlight--;
         }
       }
     } finally {

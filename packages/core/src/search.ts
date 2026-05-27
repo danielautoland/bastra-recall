@@ -66,6 +66,25 @@ export class SearchIndex {
   private detach?: () => void;
   private embeddings?: EmbeddingIndex;
 
+  // Staleness-Cache (#29): `computeStaleness()` parsed Date-Strings und
+  // rechnet Ratio-Logik — pro Recall × Hit-Count summiert sich das. Cache
+  // ist memId → { touchTs, status, computedAt }. Invalidiert in `handle()`
+  // bei change/remove, plus 12h-TTL gegen Tageswechsel (`aging → stale`
+  // ohne Vault-Change).
+  private stalenessCache = new Map<
+    string,
+    { touchTs: number; status: StaleStatus; computedAt: number }
+  >();
+  private static readonly STALENESS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+  // Query-Cache (#30): MiniSearch tokenisiert die Query bei jedem
+  // `recall()` neu. Hooks rufen häufig mit identischer Query auf
+  // (detectTopics() ist deterministisch). LRU via Map-insertion-order,
+  // hard cap 100 Einträge, TTL 30s. Vault-Change leert komplett.
+  private queryCache = new Map<string, { hits: RecallHit[]; at: number }>();
+  private static readonly QUERY_CACHE_MAX = 100;
+  private static readonly QUERY_CACHE_TTL_MS = 30_000;
+
   constructor(private readonly vault: Vault) {
     this.mini = new MiniSearch<IndexDoc>({
       fields: [
@@ -128,6 +147,14 @@ export class SearchIndex {
   recall(query: string, opts: RecallOptions = {}): RecallHit[] {
     const k = opts.k ?? 5;
     if (!query.trim()) return [];
+
+    // Query-Cache (#30) — bei Hit komplett überspringen, inkl. Hop-
+    // Expansion und Staleness-Reranking. Cache speichert das finale
+    // RecallHit[], nicht den BM25-Roh-Output.
+    const cacheKey = `recall|${query}|${JSON.stringify(opts)}`;
+    const cached = this.lookupQueryCache(cacheKey);
+    if (cached) return cached;
+
     const raw = this.mini.search(query);
 
     const filtered = raw.filter((r) => {
@@ -156,7 +183,9 @@ export class SearchIndex {
     const withHops = opts.expand_hops === 1
       ? [...direct, ...this.collectOneHopNeighbors(directFull, opts, new Set(direct.map((h) => h.id))).slice(0, k)]
       : direct;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    const reranked = this.applyStaleness(withHops);
+    this.storeQueryCache(cacheKey, reranked);
+    return reranked;
   }
 
   /** Hybrid-Recall: BM25 + Vector via Reciprocal-Rank-Fusion. Wenn kein
@@ -167,6 +196,13 @@ export class SearchIndex {
     if (!this.embeddings) return this.recall(query, opts);
     const k = opts.k ?? 5;
     if (!query.trim()) return [];
+
+    // Query-Cache (#30) — eigener Key-Prefix damit BM25-only und Hybrid
+    // sich nicht gegenseitig überschreiben (gleicher Query-String,
+    // anderes Ranking-Ergebnis).
+    const cacheKey = `hybrid|${query}|${JSON.stringify(opts)}`;
+    const cached = this.lookupQueryCache(cacheKey);
+    if (cached) return cached;
 
     // BM25 — top 50 für RRF-Pool.
     const bm25 = this.mini.search(query).filter((r) => passesRecallFilters(r, opts));
@@ -230,7 +266,9 @@ export class SearchIndex {
     const withHops = opts.expand_hops === 1
       ? [...out, ...this.collectOneHopNeighbors(outFull, opts, new Set(out.map((h) => h.id))).slice(0, k)]
       : out;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    const reranked = this.applyStaleness(withHops);
+    this.storeQueryCache(cacheKey, reranked);
+    return reranked;
   }
 
   /**
@@ -300,6 +338,11 @@ export class SearchIndex {
 
   private handle(e: VaultEvent): void {
     if (e.kind === "remove") {
+      // Staleness-Cache invalidieren (#29) — memId genügt.
+      this.stalenessCache.delete(e.id);
+      // Query-Cache komplett leeren (#30) — selektive Invalidierung wäre
+      // ein eigenes Ranking-Problem und Vault-Changes sind selten.
+      this.queryCache.clear();
       try {
         this.mini.discard(e.id);
       } catch {
@@ -308,13 +351,87 @@ export class SearchIndex {
       return;
     }
     if (e.kind === "change") {
+      this.stalenessCache.delete(e.memory.fm.id);
+      this.queryCache.clear();
       try {
         this.mini.discard(e.memory.fm.id);
       } catch {
         // first time; treat as add
       }
+    } else if (e.kind === "add") {
+      // Neue Memory könnte BM25-Ranking aller bestehenden Queries
+      // verändern → Query-Cache leeren. Staleness wird ohnehin lazy
+      // beim nächsten Recall berechnet.
+      this.queryCache.clear();
     }
     this.indexOne(e.memory);
+  }
+
+  /**
+   * Staleness-Reranking mit Per-Memory-Cache (#29). Cache-Key ist die
+   * memId — invalidiert in `handle()` bei change/remove. Zusätzlich
+   * 12h-TTL gegen Tageswechsel-Flips (`aging → stale` ohne Vault-Change).
+   *
+   * Behält die Sortier-Semantik von `applyStalenessMultiplier`: Direct-
+   * vs 1-hop-Hits bleiben getrennt sortiert.
+   */
+  private applyStaleness(hits: RecallHit[], now: Date = new Date()): RecallHit[] {
+    const nowMs = now.getTime();
+    for (const h of hits) {
+      const fm = this.vault.get(h.id)?.fm as Record<string, unknown> | undefined;
+      if (!fm) continue;
+      const touchTs = computeTouchTs(fm);
+      let entry = this.stalenessCache.get(h.id);
+      const ttlExpired =
+        entry != null && nowMs - entry.computedAt > SearchIndex.STALENESS_CACHE_TTL_MS;
+      if (!entry || entry.touchTs !== touchTs || ttlExpired) {
+        const status = computeStaleness(fm, now);
+        entry = { touchTs, status, computedAt: nowMs };
+        this.stalenessCache.set(h.id, entry);
+      }
+      const mult = STALE_MULTIPLIERS[entry.status];
+      if (mult !== 1.0) h.score = round(h.score * mult);
+    }
+    const direct = hits.filter((h) => h.hop !== "1-hop");
+    const hops = hits.filter((h) => h.hop === "1-hop");
+    direct.sort((a, b) => b.score - a.score);
+    hops.sort((a, b) => b.score - a.score);
+    return [...direct, ...hops];
+  }
+
+  /**
+   * LRU-Lookup für `queryCache` (#30). Bei Hit wird der Eintrag
+   * re-inserted, damit die Map-insertion-order ihn als „recently used"
+   * sieht. TTL 30s — frische Edits sollen den Cache nicht zu lange
+   * dominieren, auch wenn der Watcher nicht feuert.
+   */
+  private lookupQueryCache(key: string): RecallHit[] | undefined {
+    const cached = this.queryCache.get(key);
+    if (!cached) return undefined;
+    if (Date.now() - cached.at > SearchIndex.QUERY_CACHE_TTL_MS) {
+      this.queryCache.delete(key);
+      return undefined;
+    }
+    // LRU-Bump: löschen + neu setzen, damit Map-iteration den Eintrag
+    // als jüngsten sieht.
+    this.queryCache.delete(key);
+    this.queryCache.set(key, cached);
+    // Defensive Kopie — Caller könnte das Array mutieren (sortieren,
+    // pushen). Cache-Werte bleiben damit stabil über Calls hinweg.
+    return cached.hits.map((h) => ({ ...h }));
+  }
+
+  private storeQueryCache(key: string, hits: RecallHit[]): void {
+    if (this.queryCache.size >= SearchIndex.QUERY_CACHE_MAX) {
+      // Oldest first — Map preserved insertion order.
+      const oldest = this.queryCache.keys().next().value;
+      if (oldest !== undefined) this.queryCache.delete(oldest);
+    }
+    // Tiefen-Kopie der Hits, gleicher Grund wie in lookupQueryCache.
+    this.queryCache.set(key, {
+      hits: hits.map((h) => ({ ...h })),
+      at: Date.now(),
+    });
   }
 
   private indexOne(m: Memory): void {
@@ -449,6 +566,19 @@ function parseDateValue(raw: unknown): number | null {
     return Number.isNaN(t) ? null : t;
   }
   return null;
+}
+
+/**
+ * „Touch-Timestamp" einer Memory: jüngeres aus `updated` und
+ * `last_reviewed_at`. Wird vom Staleness-Cache (#29) als Identitäts-
+ * Stempel benutzt — ändert sich der touchTs, wird der Cache-Eintrag
+ * neu berechnet, auch ohne Vault-Event (z.B. wenn die Mac-App die
+ * Frontmatter direkt patcht).
+ */
+function computeTouchTs(fm: Record<string, unknown>): number {
+  const updated = parseDateValue(fm.updated) ?? 0;
+  const lastReviewed = parseDateValue(fm.last_reviewed_at) ?? 0;
+  return Math.max(updated, lastReviewed);
 }
 
 /**

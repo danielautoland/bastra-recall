@@ -46,6 +46,20 @@ export interface RecallEvent extends BaseEvent {
   top_score: number | null;
   hits: { id: string; score: number; type: string }[];
   latency_ms: number;
+  /**
+   * Pro-Stage-Timings (#38). Optional — alte Events ohne Stage-Emitter
+   * haben das Feld nicht. `cache_hit: true` zeigt einen Query-Cache-Hit,
+   * dann fehlen die übrigen Stage-Felder (außer query_parse_ms).
+   */
+  recall_stages?: {
+    query_parse_ms?: number;
+    bm25_search_ms?: number;
+    vector_search_ms?: number;
+    rrf_fuse_ms?: number;
+    hops_expand_ms?: number;
+    staleness_rank_ms?: number;
+    cache_hit?: boolean;
+  };
 }
 
 export interface LoadMemoryEvent extends BaseEvent {
@@ -90,6 +104,17 @@ export interface HookRecallEvent extends BaseEvent {
   hits: { id: string; score: number; type: string }[];
   latency_ms_recall: number;
   latency_ms_total: number;
+  /** Pro-Stage-Timings (#38). Optional — alte Hook-Events ohne Stage-
+   *  Emitter haben das Feld nicht. */
+  recall_stages?: {
+    query_parse_ms?: number;
+    bm25_search_ms?: number;
+    vector_search_ms?: number;
+    rrf_fuse_ms?: number;
+    hops_expand_ms?: number;
+    staleness_rank_ms?: number;
+    cache_hit?: boolean;
+  };
 }
 
 /** Hook CLI invocation (client-side view: total wall-clock incl. network). */

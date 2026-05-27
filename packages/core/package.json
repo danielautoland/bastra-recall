@@ -22,7 +22,9 @@
   ],
   "scripts": {
     "build": "tsc",
-    "check:types": "tsc --noEmit"
+    "check:types": "tsc --noEmit",
+    "test": "tsx --test __tests__/*.test.ts",
+    "bench:vault-init": "tsx scripts/bench-vault-init.ts"
   },
   "dependencies": {
     "chokidar": "^4.0.1",
@@ -32,6 +34,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
 }

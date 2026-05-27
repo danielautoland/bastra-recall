@@ -64,5 +64,8 @@ export {
 } from "./embeddings.js";
 export type { EmbeddingProvider, EmbeddingHit, EmbedListener } from "./embeddings.js";
 
+export { EmbedCache, hashEmbedContent } from "./embed-cache.js";
+export type { EmbedCacheEntry, EmbedCacheFile } from "./embed-cache.js";
+
 export { RelatedEnricher } from "./related-enrich.js";
 export type { RelatedEnricherOptions } from "./related-enrich.js";

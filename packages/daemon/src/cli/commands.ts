@@ -26,6 +26,7 @@ Surfaces:
 
 Options:
   --dry-run                  Print what would change; write nothing
+  --yes, -y                  Skip confirmation prompts
   --vault <path>             Vault path (BASTRA_VAULT_PATH env also works)
   --help, -h                 Show this help
   --version, -v              Show version
@@ -52,6 +53,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     vaultPath: null,
     showHelp: false,
     showVersion: false,
+    yes: false,
   };
 
   const positional: string[] = [];
@@ -60,6 +62,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (a === "--help" || a === "-h") result.showHelp = true;
     else if (a === "--version" || a === "-v") result.showVersion = true;
     else if (a === "--dry-run") result.dryRun = true;
+    else if (a === "--yes" || a === "-y") result.yes = true;
     else if (a === "--vault") {
       result.vaultPath = argv[++i] ?? null;
     } else if (a.startsWith("--vault=")) {

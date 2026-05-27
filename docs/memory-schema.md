@@ -1,185 +1,245 @@
 # Memory Schema
 
-This schema defines how a single memory is stored. It must support four concrete jobs:
+This schema defines one stored memory or document sidecar. Files are plain markdown with YAML frontmatter so they remain editable in Obsidian and by hand.
 
-1. **Autonomous save** — Claude writes a memory without being asked, in the moment a lesson is learned.
-2. **Pre-action recall** — Claude queries memorys *before* acting (e.g. before creating a new component), not only in response to user prompts.
-3. **Cross-project graph traversal** — a CSS lesson from project A surfaces in project B when relevant.
-4. **Obsidian compatibility** — plain markdown, YAML frontmatter, `[[wikilinks]]` so the same files browse cleanly in Obsidian.
+The schema supports:
 
-## Storage layout
+1. autonomous saves when a durable lesson, preference, workflow, decision, or project fact is learned;
+2. pre-action recall through `recall_when`;
+3. cross-project reuse through scope, tags, topics, wikilinks, and `related_via`;
+4. document and bookmark retrieval through the same vault/search layer;
+5. local privacy controls through `sensitivity`.
 
-- Vault root: `~/nexus-vault/`
-- Files: flat directory, one `.md` per memory. No nested folders — `topic_path` does the structuring.
-- Filename = `id` + `.md`, slug-style (lowercase-kebab-case).
-- Index: `~/.bastra/index.db` (SQLite, mirrors vault content).
+## Storage Layout
 
-Flat layout is deliberate. Folders force rigid hierarchy; the schema's `topic_path` and `tags` give a richer, multi-axis structure that Obsidian's graph view and tag pane already expose.
+The configured vault root comes from `BASTRA_VAULT_PATH` (legacy `NEXUS_VAULT_PATH` is accepted).
 
-## Frontmatter
+The vault scanner walks recursively and loads any `.md` file whose frontmatter has a recognized `type`. Ordinary Obsidian notes can live next to memories and are ignored.
 
-All fields below are required unless marked *optional*.
+Current write routing:
+
+| Kind | Folder |
+|---|---|
+| user preferences | `memories/user/` |
+| all-project memories | `memories/all-projects/` |
+| project-scoped memories | `memories/projects/<scope>/` |
+| bookmarks | `bookmarks/` |
+| document sidecars | `dokumentationen/<scope>/` |
+
+Legacy flat vaults still load because scanning is recursive and does not require files to be under those folders.
+
+The active text index is in-memory MiniSearch/BM25. Optional embeddings are stored at `<vault>/.bastra/embeddings.json`. Audit logs and trash are stored under `<vault>/.bastra/`.
+
+## Minimal Frontmatter
+
+All normal memories and document sidecars share these required fields:
 
 ```yaml
 ---
 id: css-input-focus-ring-stacking
 title: "Don't stack focus styles on inputs"
 type: lesson
-summary: "Stacking ring + outline + custom :focus on nested inputs causes double focus rings. Use a single :focus-visible utility, no extra ring/outline."
+summary: "Stacking ring + outline + custom :focus on nested inputs causes double focus rings. Use a single :focus-visible style."
 topic_path: [css, input, focus]
-tags: [css, input, focus-ring, ui-bug, antipattern]
+tags: [css, input, focus-ring, ui-bug]
 scope: all-projects
 recall_when:
   - creating new input component
   - writing input or form css
   - focus or accessibility styling
 related: [css-effects-stacking-antipattern]
-source: "carnexus, 2026-04-15 — Daniel flagged double rings for the 3rd time"
+related_via: []
+sensitivity: team
+source: "carnexus, recurring lesson"
 confidence: 0.95
 created: 2026-04-15
 updated: 2026-05-01
 ---
 ```
 
-### Field semantics
+The markdown body follows the frontmatter. For lessons, lead with the rule, then explain why it matters and how to apply it.
 
-#### `id` (string, required)
-Slug, lowercase-kebab-case. Matches filename without `.md`. Stable — never rename without a `replaces` link from the new memory.
+## Core Fields
 
-#### `title` (string, required)
-Human-readable headline, 5-12 words. Shown in Stage-1 recall hint.
+| Field | Required | Meaning |
+|---|---:|---|
+| `id` | yes | Stable slug. Usually filename without `.md`. |
+| `title` | yes | Human-readable title shown in recall hits. |
+| `type` | yes | Memory/document kind. See type table below. |
+| `summary` | yes | One dense sentence, max 400 characters. |
+| `topic_path` | yes | Hierarchical topic path, e.g. `[bastra-recall, search, ranking]`. |
+| `tags` | yes | Flat retrieval tags. At least one. |
+| `scope` | yes | Applicability boundary, e.g. `all-projects`, `user-preference`, or a project name. |
+| `recall_when` | yes | Concrete future contexts where this memory should surface. |
+| `related` | no | Manual related memory ids. Body wikilinks are mirrored here by the save path. |
+| `related_via` | no | Automatic related edges from embedding similarity. Defaults to `[]`. |
+| `sensitivity` | no | `private`, `team`, or `public`. Defaults to `team`. |
+| `source` | no | Provenance or reason this memory exists. |
+| `confidence` | no | Number from `0` to `1`. Defaults to `1.0`. |
+| `created` | yes | ISO date. Auto-set by save paths. |
+| `updated` | yes | ISO date. Auto-set by save/update paths. |
 
-#### `type` (enum, required)
-| value | meaning | example |
-|---|---|---|
-| `lesson` | Anti-pattern or correction learned from failure | "Don't stack focus styles" |
-| `preference` | User's stable preference for how I work | "No 5-option plans, give recommendation + 1 question" |
-| `project-fact` | Stable fact about a specific project | "carnexus uses Drizzle ORM" |
-| `meta-working` | Fact about working with Claude itself | "Output quality drops with codebase size — split sessions" |
-| `decision` | Architectural choice, with rationale | "Chose SQLite+FTS5 over Neo4j because…" |
-| `workflow` | Process step to always follow | "Run `npm run check` before commit" |
-| `reference` | Pointer to external resource (URL, dashboard, doc) | "Carnexus prod logs at …" |
+## Types
 
-Type drives default ranking weights and recall triggers (e.g., `preference` memorys get pulled on every session start, `lesson` only on contextual matches).
+Recognized `type` values:
 
-#### `summary` (string, required, ≤200 chars)
-One dense line. This is what Claude sees in the Stage-1 recall hint — make every word count.
+| Type | Meaning |
+|---|---|
+| `lesson` | Anti-pattern or correction learned from failure |
+| `preference` | Stable project-scoped or working preference |
+| `project-fact` | Stable fact about a project or feature area |
+| `meta-working` | Durable fact about how the assistant should work |
+| `decision` | Committed design/product/architecture decision |
+| `workflow` | Repeatable process or checklist |
+| `reference` | Pointer to an external or internal resource |
+| `user-preference` | Cross-project user preference |
+| `bookmark` | Saved URL with bookmark metadata |
+| `doc` | Document sidecar for file/document retrieval |
 
-✅ `"Stacking ring + outline + custom :focus on nested inputs causes double focus rings. Use single :focus-visible, nothing extra."`
+## Recall Fields
 
-❌ `"Notes about input focus styling in carnexus."`
+`recall_when` is the most important retrieval field. It is boosted above title, tags, topic path, summary, and body in the MiniSearch index. If embeddings are enabled, the same authored text also contributes to semantic recall because it is included in the embedding text.
 
-#### `topic_path` (array of strings, required)
-Hierarchical, semantic. Reads as a path from broad to specific. Drives graph traversal — memorys sharing a prefix are weighted higher in recall.
-
-Examples:
-- `[css, input, focus]`
-- `[claude-meta, communication, planning]`
-- `[carnexus, schema, migration]`
-
-Aim for 2-4 levels.
-
-#### `tags` (array of strings, required, ≥1)
-Flat, lowercase-kebab-case keywords. Used by FTS5 for keyword search. 3-7 tags. Avoid generic tags like `code`, `bug`, `note`.
-
-#### `scope` (enum, required)
-Where this memory applies:
-
-- `all-projects` — universal (most lessons, preferences, claude-meta)
-- `<project-name>` — limited to one project (e.g., `carnexus`)
-- `user-preference` — about the user (overrides project context)
-- `claude-meta` — about Claude as a tool (hits regardless of project)
-
-The recall logic uses `scope` to decide whether a hit from project A is relevant to a query in project B.
-
-#### `recall_when` (array of strings, required, ≥1)
-**The "buildin"-feel field.** Free-form natural-language patterns that describe contexts where this memory should be surfaced. The recall hook compares the current action context against these patterns (FTS5 matches, later embedding similarity).
-
-Examples for a CSS-input-focus lesson:
-- `creating new input component`
-- `writing input or form css`
-- `focus or accessibility styling`
-
-Examples for a "no 5-option plans" preference:
-- `presenting options to user`
-- `proposing a plan`
-- `before responding with multiple alternatives`
-
-Without this field, Claude only recalls when the user prompt matches. With this field, Claude can recall before its *own* actions (PreToolUse hooks).
-
-#### `related` (array of memory ids, optional)
-Other memory ids this connects to. Graph edges. Used for "follow related" expansion during recall.
-
-#### `source` (string, optional)
-Provenance. Where/when this lesson was learned. Helps later sanity-checking: was this a one-off or a recurring pattern?
-
-#### `confidence` (float 0–1, optional, default 1.0)
-How sure are we this is a real, stable pattern? Lower for early-observation memorys; higher after re-confirmation. Decays slowly over time without re-confirmation.
-
-#### `created`, `updated` (ISO date, required)
-Auto-set by the save tool.
-
-#### Optional evolution fields
-- `obsolete: true` — pattern no longer applies
-- `replaces: <id>` — supersedes another memory
-- `superseded_by: <id>` — soft-replaced by a newer memory
-
-#### Optional augmentation fields (added during migration, 2026-05-01)
-
-These were introduced when migrating Daniel's existing carnexus memorys and proved useful enough to keep in the schema.
-
-##### `affects_files` (array of strings, optional)
-Concrete file paths this memory references. Used by the `PreToolUse` Write/Edit hook: when Claude is about to touch one of these files, this memory's relevance is boosted.
+Good values describe future actions:
 
 ```yaml
-affects_files:
-  - frontend/src/components/shared/SwapCardToggle.js
-  - frontend/src/styles/styleguide.css
+recall_when:
+  - creating new input component
+  - writing input or form css
+  - focus or accessibility styling
 ```
 
-##### `status` (string, optional)
-For project-fact / decision memorys with state. Free-form short token, but conventional values:
+Weak values are generic:
 
-| value | meaning |
+```yaml
+recall_when:
+  - css
+  - frontend
+```
+
+The current matching stack is BM25 with prefix/fuzzy search, optionally fused with vector search through Reciprocal Rank Fusion. It is not SQLite/FTS5.
+
+## Relationships
+
+`related` is a manual list of memory ids. The save path also extracts `[[memory-id]]` wikilinks from the body and mirrors them into `related`, excluding links in the auto-related section.
+
+`related_via` is maintained by the optional `RelatedEnricher`:
+
+```yaml
+related_via:
+  - id: css-effects-stacking-antipattern
+    reason: "cosine 0.812"
+    score: 0.812
+```
+
+When recall is called with `expand_hops: 1`, one-hop `related_via` neighbors can be added to the result set with a reduced score.
+
+The auto-related body section is managed between marker comments:
+
+```markdown
+## Auto-Related <!-- bastra:auto-related:start -->
+
+- [[css-effects-stacking-antipattern]] (cosine 0.81)
+
+<!-- bastra:auto-related:end -->
+```
+
+Do not manually edit inside that section.
+
+## Lifecycle And Ranking Fields
+
+These optional fields affect staleness and recall ranking:
+
+| Field | Meaning |
 |---|---|
-| `stable` | well-established, unlikely to change |
-| `in-progress` | actively being built |
-| `partial` | partially implemented, some pieces still open |
-| `planned` | spec exists, no implementation yet |
-| `open` | known issue, not yet addressed |
-| `removed-but-reversible` | feature was removed but the code path is preserved |
+| `valid_until` | Explicit ISO date after which the memory expires |
+| `expires_after_days` | Override for type-based expiration defaults |
+| `last_reviewed_at` | ISO date of the last manual review |
+| `stale_status` | Optional persisted status: `fresh`, `aging`, `stale`, `expired` |
+| `obsolete` | If true, the memory is filtered out of normal recall |
+| `replaces` | Memory id this one replaces |
+| `superseded_by` | Newer memory that supersedes this one |
 
-##### `issues` (array of strings, optional)
-GitHub issue numbers this memory tracks (e.g., `["#262", "#159"]`). Useful for cross-referencing during planning.
+Staleness is computed lazily during recall. Stale and expired memories are downranked; obsolete memories are removed from normal search results.
 
-The schema will continue to grow ad-hoc when real usage uncovers gaps. New fields should be added here in this doc with their semantics, not silently introduced into individual memorys.
+## Privacy Field
+
+`sensitivity` controls which callers can see a memory:
+
+| Value | Meaning |
+|---|---|
+| `private` | Hidden from external MCP/REST callers unless `allow_private: true` |
+| `team` | Default; visible to local AI tools |
+| `public` | Safe for broader cross-surface exposure |
+
+Both recall and direct load paths enforce this filter.
+
+## Augmentation Fields
+
+General optional fields:
+
+| Field | Meaning |
+|---|---|
+| `affects_files` | Repo paths this memory applies to |
+| `status` | Free-form state such as `stable`, `in-progress`, `planned`, `open` |
+| `issues` | Related issue ids such as `#42` |
+
+Bookmark-only fields:
+
+| Field | Meaning |
+|---|---|
+| `url` | Saved URL |
+| `categories` | Bookmark categories |
+| `read_status` | `unread`, `read`, or `archived` |
+| `og_image` | Open Graph image URL |
+| `saved_at` | ISO timestamp |
+| `source_app` | App/source that saved the bookmark |
+
+Document-only fields:
+
+| Field | Meaning |
+|---|---|
+| `original_path` | Original file path for the document |
+| `linked_file` | If true, original remains outside the vault |
+| `document_category` | `vertrag`, `rechnung`, `notiz`, `code`, `bild`, or `sonstiges` |
+| `folder_path` | Folder path used by document tools |
+| `needs_review` | Auto-inbox review flag |
+| `ai_suggested_folder` | Suggested target folder for review UI |
+| `content_hash` | SHA-256 content hash for duplicate detection |
+| `content_size` | Original file size in bytes |
+| `location` | Optional geo metadata: `{ lat, lon, place?, source? }` |
 
 ## Body
 
-Full markdown. Recommended structure:
+Recommended body for lessons:
 
 ```markdown
-## Context
-What was the situation, what triggered this lesson.
-
-## What went wrong (or: what does the user want)
-Concrete failure path, or concrete preference statement.
-
-## The fix / rule
-The actual lesson, code-level if relevant.
+## Rule
+State the rule or fix directly.
 
 ## Why
-Root cause. Without this, the lesson is fragile — Claude reapplies the wrong fix to the next variant.
+Explain the failure path and root cause.
+
+## How to apply
+Name the future situation where this should change behavior.
 
 ## See also
-[[other-memory-id]] for related patterns.
+[[other-memory-id]]
 ```
 
-Use `[[wikilinks]]` for cross-references — Obsidian renders them as graph edges automatically, AND the indexer parses them as additional `related` entries.
+Document sidecars usually store a short pointer to the original file plus extracted text:
 
-## Six example memorys
+```markdown
+> Sidecar for `/path/to/original.pdf`.
 
-### 1. Lesson — CSS focus ring stacking
+## Extracted content
+
+...
+```
+
+## Examples
+
+### Lesson
 
 ```yaml
 ---
@@ -194,149 +254,105 @@ recall_when:
   - creating new input component
   - writing input or form css
   - focus or accessibility styling
-  - tailwind ring utility on form elements
-related: [css-effects-stacking-antipattern]
-source: "carnexus, recurring — flagged 3+ times"
+related: []
+related_via: []
+sensitivity: team
+source: "recurring UI bug"
 confidence: 0.95
 created: 2026-04-15
 updated: 2026-05-01
 ---
 ```
 
-Body explains the bug, the fix, and the root cause (Tailwind's `ring` + an explicit `outline` + a wrapping component's own focus style all activate at once).
-
-### 2. Preference — no 5-option plans
+### User Preference
 
 ```yaml
 ---
 id: pref-plan-format-recommendation-not-options
-title: "Daniel wants recommendations, not 5-option menus"
-type: preference
-summary: "When proposing a plan, give 1 recommendation + the main tradeoff + 1 follow-up question. Not a 5-option list — that pushes the decision back."
-topic_path: [claude-meta, communication, planning]
-tags: [communication, plans, decisions, format]
+title: "Prefer recommendations over option menus"
+type: user-preference
+summary: "When proposing a plan, give one recommendation, the main tradeoff, and at most one follow-up question."
+topic_path: [user, communication, planning]
+tags: [communication, plans, decisions]
 scope: user-preference
 recall_when:
   - proposing a plan
   - presenting options
-  - before responding with multiple alternatives
   - architectural decision request
 related: []
-source: "stated explicitly 2026-05-01"
-confidence: 1.0
+related_via: []
+sensitivity: team
+confidence: 1
 created: 2026-05-01
 updated: 2026-05-01
 ---
 ```
 
-### 3. Project-fact — carnexus scale
+### Bookmark
 
 ```yaml
 ---
-id: carnexus-large-codebase-multi-session
-title: "Carnexus is large — single-session work often won't fit"
-type: project-fact
-summary: "Carnexus has many interconnected features. Plan multi-session work for any non-trivial feature; persist context between sessions via memorys."
-topic_path: [carnexus, project-shape]
-tags: [carnexus, codebase-size, sessions, context-management]
-scope: carnexus
+id: mcp-spec-bookmark
+title: "Model Context Protocol specification"
+type: bookmark
+summary: "Reference bookmark for the MCP specification."
+topic_path: [references, mcp]
+tags: [mcp, protocol, reference]
+scope: all-projects
 recall_when:
-  - starting work on carnexus
-  - planning a carnexus feature
-  - estimating effort on carnexus
-related: [meta-output-quality-vs-codebase-size]
-source: "stated 2026-05-01"
-confidence: 1.0
-created: 2026-05-01
-updated: 2026-05-01
----
-```
-
-### 4. Meta-working — output quality vs codebase size
-
-```yaml
----
-id: meta-output-quality-vs-codebase-size
-title: "My output quality drops as codebase grows"
-type: meta-working
-summary: "On large codebases, even within context limits, my answers degrade. Mitigate by working in smaller scope per session and saving findings to memory."
-topic_path: [claude-meta, performance, codebase-scale]
-tags: [self-knowledge, context, quality, sessions]
-scope: claude-meta
-recall_when:
-  - working in a large codebase
-  - context approaching limits
-  - long debugging session
-  - quality of recent answers feels off
-related: [carnexus-large-codebase-multi-session]
-source: "Daniel observation 2026-05-01"
-confidence: 0.85
-created: 2026-05-01
-updated: 2026-05-01
----
-```
-
-### 5. Decision — placeholder
-
-```yaml
----
-id: bastra-recall-storage-sqlite-fts5
-title: "bastra-recall storage: SQLite + FTS5, embeddings later"
-type: decision
-summary: "Chose SQLite (graph) + FTS5 (keyword) for v0. Embeddings (bge-m3 local) deferred to v0.5 — only added if FTS5 misses too often."
-topic_path: [bastra-recall, architecture, storage]
-tags: [sqlite, fts5, embeddings, architecture]
-scope: bastra-recall
-recall_when:
-  - storage choice question on bastra-recall
-  - retrieval quality discussion
-  - considering embeddings
+  - checking MCP protocol details
 related: []
-source: "design discussion 2026-05-01"
-confidence: 0.9
+related_via: []
+sensitivity: public
+url: "https://modelcontextprotocol.io/"
+categories: [ai, protocol]
+read_status: unread
+saved_at: 2026-05-01T12:00:00.000Z
+confidence: 1
 created: 2026-05-01
 updated: 2026-05-01
 ---
 ```
 
-### 6. Workflow — placeholder
+### Document Sidecar
 
 ```yaml
 ---
-id: carnexus-pre-commit-npm-check
-title: "Run `npm run check` before every commit on carnexus"
-type: workflow
-summary: "Carnexus's `npm run check` runs typecheck + lint + tests. Skip = broken main."
-topic_path: [carnexus, workflow, commit]
-tags: [carnexus, npm, ci, pre-commit]
-scope: carnexus
+id: doc-contract-2026
+title: "Contract 2026"
+type: doc
+summary: "vertrag: Contract 2026"
+topic_path: [documents, contracts]
+tags: [contract, 2026]
+scope: documents
 recall_when:
-  - about to commit on carnexus
-  - finishing a carnexus task
-  - before git commit on carnexus
+  - find document Contract 2026
+  - contract 2026
 related: []
-source: "(placeholder — confirm with Daniel)"
-confidence: 0.6
+related_via: []
+sensitivity: team
+original_path: "/Users/example/Documents/Contract 2026.pdf"
+linked_file: false
+document_category: vertrag
+folder_path: contracts
+confidence: 1
 created: 2026-05-01
 updated: 2026-05-01
 ---
 ```
 
-## Validation rules
+## Validation Rules
 
-The save tool rejects any memory that:
-- Lacks any required field
-- Has empty `tags`, `topic_path`, or `recall_when`
-- Has `summary` longer than 200 characters
-- Has invalid `type` value
-- Has invalid `scope` (must match enum or known project name)
-- Has duplicate `id` in the vault
-- References non-existent ids in `related`
+The current Zod schema rejects files that have a recognized memory `type` but invalid frontmatter. Required validations include:
 
-A `bastra-recall lint` command runs these checks against the whole vault.
+- non-empty `id`, `title`, `summary`, `scope`;
+- `summary` length at most 400 characters;
+- recognized `type`;
+- non-empty `topic_path`, `tags`, and `recall_when`;
+- `confidence` between `0` and `1`;
+- valid enum values for `sensitivity`, `read_status`, and location source when present;
+- positive integer lifecycle overrides where required.
 
-## Open questions for v0
+Files without a recognized `type` are treated as ordinary notes and skipped, not as schema failures.
 
-1. **Project name registry.** Is `scope: carnexus` free-form, or registered? Free-form is easier; registered prevents typos. Likely: free-form, with a warning on first use of a new project name.
-2. **`recall_when` matching.** v0: FTS5 substring match. v0.5: semantic (embeddings). Acceptable for v0?
-3. **Auto-tagging on save.** Should the save tool suggest tags based on content, or require Claude to specify them every time? Likely: Claude proposes, save tool accepts as-is. Tag-discipline is on Claude.
+The save path rejects duplicate ids at the destination path unless `overwrite: true` is passed. It does not require `scope` to come from a registry.

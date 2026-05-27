@@ -79,13 +79,14 @@ async function main(): Promise<void> {
   if (suggestions.length === 0) {
     emitEmpty();
   } else {
+    // Stop-Hook hat kein hookSpecificOutput im Claude-Code-Schema.
+    // Nur top-level Felder erlaubt: continue, suppressOutput, stopReason,
+    // decision, reason, systemMessage, terminalSequence, permissionDecision.
+    // → systemMessage trägt den <save-eval>-Block (sichtbar für den Agent).
     const blocks = suggestions.map(formatSuggestion).join("\n");
     process.stdout.write(
       JSON.stringify({
-        hookSpecificOutput: {
-          hookEventName: "Stop",
-          additionalContext: blocks,
-        },
+        systemMessage: blocks,
       }),
     );
   }

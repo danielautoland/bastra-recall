@@ -66,6 +66,17 @@ export class SearchIndex {
   private detach?: () => void;
   private embeddings?: EmbeddingIndex;
 
+  // Staleness-Cache (#29): `computeStaleness()` parsed Date-Strings und
+  // rechnet Ratio-Logik — pro Recall × Hit-Count summiert sich das. Cache
+  // ist memId → { touchTs, status, computedAt }. Invalidiert in `handle()`
+  // bei change/remove, plus 12h-TTL gegen Tageswechsel (`aging → stale`
+  // ohne Vault-Change).
+  private stalenessCache = new Map<
+    string,
+    { touchTs: number; status: StaleStatus; computedAt: number }
+  >();
+  private static readonly STALENESS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
   constructor(private readonly vault: Vault) {
     this.mini = new MiniSearch<IndexDoc>({
       fields: [
@@ -156,7 +167,7 @@ export class SearchIndex {
     const withHops = opts.expand_hops === 1
       ? [...direct, ...this.collectOneHopNeighbors(directFull, opts, new Set(direct.map((h) => h.id))).slice(0, k)]
       : direct;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    return this.applyStaleness(withHops);
   }
 
   /** Hybrid-Recall: BM25 + Vector via Reciprocal-Rank-Fusion. Wenn kein
@@ -230,7 +241,7 @@ export class SearchIndex {
     const withHops = opts.expand_hops === 1
       ? [...out, ...this.collectOneHopNeighbors(outFull, opts, new Set(out.map((h) => h.id))).slice(0, k)]
       : out;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    return this.applyStaleness(withHops);
   }
 
   /**
@@ -300,6 +311,8 @@ export class SearchIndex {
 
   private handle(e: VaultEvent): void {
     if (e.kind === "remove") {
+      // Staleness-Cache invalidieren (#29) — memId genügt.
+      this.stalenessCache.delete(e.id);
       try {
         this.mini.discard(e.id);
       } catch {
@@ -308,6 +321,7 @@ export class SearchIndex {
       return;
     }
     if (e.kind === "change") {
+      this.stalenessCache.delete(e.memory.fm.id);
       try {
         this.mini.discard(e.memory.fm.id);
       } catch {
@@ -315,6 +329,38 @@ export class SearchIndex {
       }
     }
     this.indexOne(e.memory);
+  }
+
+  /**
+   * Staleness-Reranking mit Per-Memory-Cache (#29). Cache-Key ist die
+   * memId — invalidiert in `handle()` bei change/remove. Zusätzlich
+   * 12h-TTL gegen Tageswechsel-Flips (`aging → stale` ohne Vault-Change).
+   *
+   * Behält die Sortier-Semantik von `applyStalenessMultiplier`: Direct-
+   * vs 1-hop-Hits bleiben getrennt sortiert.
+   */
+  private applyStaleness(hits: RecallHit[], now: Date = new Date()): RecallHit[] {
+    const nowMs = now.getTime();
+    for (const h of hits) {
+      const fm = this.vault.get(h.id)?.fm as Record<string, unknown> | undefined;
+      if (!fm) continue;
+      const touchTs = computeTouchTs(fm);
+      let entry = this.stalenessCache.get(h.id);
+      const ttlExpired =
+        entry != null && nowMs - entry.computedAt > SearchIndex.STALENESS_CACHE_TTL_MS;
+      if (!entry || entry.touchTs !== touchTs || ttlExpired) {
+        const status = computeStaleness(fm, now);
+        entry = { touchTs, status, computedAt: nowMs };
+        this.stalenessCache.set(h.id, entry);
+      }
+      const mult = STALE_MULTIPLIERS[entry.status];
+      if (mult !== 1.0) h.score = round(h.score * mult);
+    }
+    const direct = hits.filter((h) => h.hop !== "1-hop");
+    const hops = hits.filter((h) => h.hop === "1-hop");
+    direct.sort((a, b) => b.score - a.score);
+    hops.sort((a, b) => b.score - a.score);
+    return [...direct, ...hops];
   }
 
   private indexOne(m: Memory): void {
@@ -449,6 +495,19 @@ function parseDateValue(raw: unknown): number | null {
     return Number.isNaN(t) ? null : t;
   }
   return null;
+}
+
+/**
+ * „Touch-Timestamp" einer Memory: jüngeres aus `updated` und
+ * `last_reviewed_at`. Wird vom Staleness-Cache (#29) als Identitäts-
+ * Stempel benutzt — ändert sich der touchTs, wird der Cache-Eintrag
+ * neu berechnet, auch ohne Vault-Event (z.B. wenn die Mac-App die
+ * Frontmatter direkt patcht).
+ */
+function computeTouchTs(fm: Record<string, unknown>): number {
+  const updated = parseDateValue(fm.updated) ?? 0;
+  const lastReviewed = parseDateValue(fm.last_reviewed_at) ?? 0;
+  return Math.max(updated, lastReviewed);
 }
 
 /**

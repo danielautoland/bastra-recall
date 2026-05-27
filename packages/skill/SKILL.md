@@ -1,6 +1,6 @@
 ---
 name: bastra-recall
-description: Persistent teammate-memory for Claude across sessions. USE PROACTIVELY whenever the user (a) expresses repetition or frustration about a recurring issue ("wieder", "schon wieder", "wie oft", emphatic caps), (b) states an explicit durable rule ("immer X", "nie Y", "bei diesem Projekt …"), (c) corrects a recurring tendency in your behavior, (d) finalizes an architectural decision after weighing options, (e) confirms a workflow ("lass uns das immer so machen"), or (f) completes a coherent feature / multi-file refactor / sub-system milestone (save the file map as project-fact). Also USE before writing/editing code, before a new coding block in an area you haven't touched this session (recall the topology map first), before giving multi-step plans, and at session start — to recall stored lessons, preferences, and project facts via the bastra-recall MCP server.
+description: Persistent external brain for Claude — documents (PDFs, contracts, scans with OCR), personal facts (appointments, decisions, items, amounts), AND code lessons / preferences / project topology. USE PROACTIVELY in three modes. (1) RECALL — whenever the user asks about anything from their past, vault, projects, or personal life, INCLUDING direct retrieval phrasings like "find...", "where is...", "when was...", "how much was...", "do I have a ...", "such mal meinen ...". Call bastra-recall (recall + find_document) BEFORE conversation_search, before web_search, before any other lookup tool. (2) CAPTURE — when the user expresses frustration about a recurring issue ("wieder", "schon wieder", "wie oft", emphatic caps), states an explicit durable rule ("immer X", "nie Y", "bei diesem Projekt …"), corrects a recurring tendency in your behavior, finalizes an architectural decision after weighing options, confirms a workflow ("lass uns das immer so machen"), or completes a coherent feature / multi-file refactor / sub-system milestone (save the file map as project-fact). (3) APPLY — at session start, before writing/editing code, before a new coding block in an area you haven't touched this session (recall the topology map first), and before giving multi-step plans. Tools: recall, load_memory, save_memory, find_document, read_document.
 ---
 
 # bastra-recall — autonomous teammate memory
@@ -21,6 +21,7 @@ Call `recall(query, k=5)` proactively in these moments:
 | **Before writing/editing a file** | `"writing <filetype> at <path>, contains <topics>"` — catches lessons before mistakes (e.g. CSS pitfalls, schema rules) |
 | **Before a new coding block / plan in a feature area** | `"<project> <feature/area> current state files architecture"` — surfaces which files are relevant + what's already built (see Project topology below) |
 | **Before a multi-step plan or recommendation** | `"giving plan/recommendation for <topic>"` — surfaces format preferences |
+| **User asks for retrieval / lookup** ("find...", "where is...", "how much was...", "when did...", "do I have a...", "such mal meinen...") | the prompt itself + direct nouns — ALWAYS try `recall` and `find_document` **before** any other search tool (conversation_search, web_search) |
 | **User prompt touches a stored topic** | the prompt itself, optionally with project context |
 | **Before `save_memory`** | the title/topic — duplicate check |
 
@@ -31,6 +32,17 @@ What to do with hits (interpret the score):
 - **Score < 30** → usually noise; skip unless the summary is a perfect topic match.
 
 Idempotent: don't reload a memory you've already loaded this turn.
+
+### Tool priority for retrieval
+
+When the user asks about anything personal, factual, historical, or document-shaped ("find my X", "where is my Y", "how much was Z", "when did I …", "do I have a …", "such mal meinen …"), try the vault **first**. Order:
+
+1. **`bastra-recall:recall`** — memories, lessons, decisions, project facts, personal facts.
+2. **`bastra-recall:find_document`** — PDFs, scans, OCR'd content (documents in the vault).
+3. **`conversation_search`** — chat history. Fallback only.
+4. **`web_search`** — external info. Last resort for personal queries.
+
+Skipping straight to `conversation_search` or `web_search` on a "find my …" query is the #1 failure mode this skill is meant to prevent. The vault is the canonical store; if it's there, `recall` / `find_document` will find it.
 
 ---
 

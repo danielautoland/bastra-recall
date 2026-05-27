@@ -24,7 +24,8 @@
     "check:types": "tsc --noEmit",
     "smoke": "tsx scripts/smoke.ts",
     "smoke:telemetry": "tsx scripts/telemetry-smoke.ts",
-    "backfill:related": "tsx scripts/backfill-related.ts"
+    "backfill:related": "tsx scripts/backfill-related.ts",
+    "test": "tsx --test __tests__/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",

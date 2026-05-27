@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import process from "process";
 import { probeDaemon } from "./helpers.js";
 import { ADAPTERS } from "./registry.js";
@@ -15,23 +16,23 @@ export async function cmdStatus(options: StatusOptions): Promise<number> {
   let hasError = false;
   const statusResult: Record<string, any> = {};
 
-  // 1. Daemon 상태 확인 (helpers.ts의 실제 probeDaemon 리턴 타입 반영)
+  // 1. Check daemon status
   const daemonInfo = await probeDaemon();
   if (daemonInfo.ok) {
-    // daemonInfo.detail에 "vault_size=157" 형태로 들어있으므로 파싱하거나 그대로 노출
-    statusResult["daemon"] = { status: "ok", detail: daemonInfo.detail };
+    // Expose daemonInfo.detail as message
+    statusResult["daemon"] = { status: "ok", message: daemonInfo.detail };
     if (!options.quiet && !options.json) {
       printLine(`✓ daemon          (${daemonInfo.detail})`);
     }
   } else {
     hasError = true;
-    statusResult["daemon"] = { status: "error", detail: daemonInfo.detail };
+    statusResult["daemon"] = { status: "error", message: daemonInfo.detail };
     if (!options.quiet && !options.json) {
       printLine(`✗ daemon          (${daemonInfo.detail})`);
     }
   }
 
-  // 2. 어댑터(클라이언트) 상태 확인 (registry.ts의 ADAPTERS 활용)
+  // 2. Check adapters status
   for (const [name, adapter] of Object.entries(ADAPTERS)) {
     try {
       const r = await adapter.doctor();
@@ -58,15 +59,11 @@ export async function cmdStatus(options: StatusOptions): Promise<number> {
     }
   }
 
-  // 3. 플래그(options) 조건 처리
+  // 3. Handle options and flags
   if (options.json) {
     printLine(JSON.stringify(statusResult, null, 2));
   }
 
-  // quiet 플래그가 있으면 프로세스를 강제 종료하고, 없으면 일반 리턴 코드를 반환합니다.
-  if (options.quiet) {
-    process.exit(hasError ? 1 : 0);
-  }
-
+  // Return exit code based on error status
   return hasError ? 1 : 0;
 }

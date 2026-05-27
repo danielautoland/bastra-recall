@@ -34,7 +34,7 @@ async function main(): Promise<number> {
     case "doctor": return cmdDoctor(args);
     case "update": return cmdUpdate(args);
     case "status": {
-      const rc = await cmdStatus({ json: (args as any).json, quiet: (args as any).quiet });
+      const rc = await cmdStatus({ json: args.json, quiet: args.quiet });
       return rc;
     }
     default:

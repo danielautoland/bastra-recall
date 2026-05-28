@@ -9,7 +9,8 @@
   },
   "workspaces": [
     "packages/core",
-    "packages/daemon"
+    "packages/daemon",
+    "packages/statusline"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",

@@ -21,10 +21,54 @@
 import { detectProject } from "@bastra-recall/core";
 import { request } from "node:http";
 import { appendFile, mkdir } from "node:fs/promises";
+import { readFileSync, writeFileSync, renameSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { envFirst, envInt } from "./env.js";
 import { defaultLogDir } from "./telemetry.js";
+import { claudeSessionPid, sessionFeedPath, STATUSLINE_DIR } from "./statusline-session.js";
+
+// Session-namespaced feed — same path the forwarder of THIS session writes
+// (claude ancestor PID, since CC sends no session id — #41836).
+const STATUSLINE_FEED_PATH = sessionFeedPath(claudeSessionPid());
+
+/**
+ * Reset the statusline feed to idle at the start of each user turn. MUST be
+ * synchronous + instant (no network) — any delay opens a race where the
+ * turn's recalls increment counters first and the late reset clobbers them
+ * back to zero (under-count). Preserves the previous vault_size; the
+ * forwarder refreshes it on the next recall-done.
+ */
+function resetStatuslineFeed(): void {
+  try {
+    let vaultSize = 0;
+    try {
+      const prev = JSON.parse(readFileSync(STATUSLINE_FEED_PATH, "utf8")) as {
+        vault_size?: number;
+      };
+      vaultSize = prev.vault_size ?? 0;
+    } catch {
+      // no prior file — vault_size stays 0 until first recall populates it
+    }
+    const state = {
+      ts: Date.now(),
+      state: "idle",
+      vault_size: vaultSize,
+      recall_count: 0,
+      total_hits: 0,
+      total_ms: 0,
+      current_stage: null,
+      current_stage_started_at: null,
+      current_recall_started_at: null,
+    };
+    mkdirSync(STATUSLINE_DIR, { recursive: true });
+    const tmp = `${STATUSLINE_FEED_PATH}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(state), "utf8");
+    renameSync(tmp, STATUSLINE_FEED_PATH);
+  } catch {
+    // statusline reset is non-essential — never break the prompt hook
+  }
+}
 
 const HOOK_TIMEOUT_MS = envInt("BASTRA_HOOK_TIMEOUT_MS", 250, "NEXUS_HOOK_TIMEOUT_MS");
 const DEFAULT_PORT = 6723;
@@ -99,6 +143,9 @@ async function main(): Promise<void> {
   }
 
   if (payload.hook_event_name !== "UserPromptSubmit") return emitEmpty();
+
+  // New user turn → reset statusline counters to idle (synchronous, instant).
+  resetStatuslineFeed();
 
   const prompt = extractPrompt(payload);
   if (!prompt) return emitEmpty();

@@ -147,6 +147,16 @@ async function main(): Promise<void> {
     vaultPath: VAULT_PATH!,
   };
 
+  // Idle self-shutdown: the shared daemon is spawned on demand by the
+  // mcp-forwarder, so it can safely self-terminate after a stretch of no
+  // activity — the next recall respawns it. Keeps the process table clean
+  // (no orphaned daemons after sessions end). 0 disables. Default 30 min.
+  const idleShutdownMs = envInt("BASTRA_DAEMON_IDLE_SHUTDOWN_MS", 30 * 60 * 1000);
+  let lastActivityMs = Date.now();
+  const markActivity = (): void => {
+    lastActivityMs = Date.now();
+  };
+
   const httpPort = envInt("BASTRA_HTTP_PORT", DEFAULT_HTTP_PORT, "NEXUS_HTTP_PORT");
   const httpHandle =
     envFirst("BASTRA_HTTP", "NEXUS_HTTP") === "off"
@@ -159,6 +169,7 @@ async function main(): Promise<void> {
           version: DAEMON_VERSION,
           toolDeps,
           documentWriteEnabled: DOCUMENT_WRITE_ENABLED,
+          onActivity: markActivity,
         });
 
   const server = new Server(
@@ -183,6 +194,7 @@ async function main(): Promise<void> {
   const banterLang = (process.env.BASTRA_BANTER_LANG ?? "en").toLowerCase() === "de" ? "de" : "en";
 
   server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
+    markActivity();
     const { name, arguments: args } = req.params;
 
     if (name === "recall") {
@@ -338,6 +350,21 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
+
+  // Idle watchdog — terminate after `idleShutdownMs` without activity.
+  // `.unref()` so the timer itself never keeps the process alive.
+  if (idleShutdownMs > 0) {
+    const tick = Math.min(idleShutdownMs, 60_000);
+    const idleTimer = setInterval(() => {
+      if (Date.now() - lastActivityMs >= idleShutdownMs) {
+        console.error(
+          `[bastra-recall] idle for ${Math.round(idleShutdownMs / 60000)}min — self-terminating (respawns on next recall)`,
+        );
+        void shutdown();
+      }
+    }, tick);
+    idleTimer.unref();
+  }
 }
 
 function errorResult(msg: string) {

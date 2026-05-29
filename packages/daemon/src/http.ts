@@ -48,6 +48,7 @@ import {
   recallHandler,
   loadMemoryHandler,
   saveMemoryHandler,
+  toLeanHit,
   type ToolDeps,
 } from "./tool-handlers.js";
 import {
@@ -76,6 +77,9 @@ export interface HttpOptions {
   version: string;
   toolDeps: ToolDeps;
   documentWriteEnabled: boolean;
+  /** Called on every real request (everything except GET /health). Lets the
+   *  daemon track activity for idle self-shutdown. */
+  onActivity?: () => void;
 }
 
 const MAX_BODY_BYTES = 256 * 1024; // 256 KiB — content excerpts are capped client-side
@@ -99,7 +103,7 @@ function isLoopback(req: IncomingMessage): boolean {
 }
 
 export async function startHttpServer(opts: HttpOptions): Promise<HttpHandle> {
-  const { port, vault, telemetry, version, toolDeps, documentWriteEnabled } = opts;
+  const { port, vault, telemetry, version, toolDeps, documentWriteEnabled, onActivity } = opts;
   const { search } = toolDeps;
 
   const apiToken = process.env.BASTRA_API_TOKEN ?? "";
@@ -110,6 +114,10 @@ export async function startHttpServer(opts: HttpOptions): Promise<HttpHandle> {
     const t0 = Date.now();
     const url = req.url ?? "";
     const method = req.method ?? "GET";
+
+    // Activity signal for idle self-shutdown — count real work, not the
+    // cheap /health liveness ping (else a monitor would keep us alive forever).
+    if (url !== "/health") onActivity?.();
 
     // CORS preflight for /api/v1/*
     if (method === "OPTIONS" && url.startsWith("/api/v1/")) {
@@ -331,8 +339,11 @@ function handleHookRecall(
         }),
       );
 
+      // Lean projection (#50): the hook CLI only consumes lean fields, so we
+      // never need to send matched_terms/mode/hop/topic_path over the wire.
+      // Telemetry above already logged the full hits.
       const payload = {
-        hits,
+        hits: hits.map(toLeanHit),
         vault_size: vault.size(),
         latency_ms: totalLatencyMs,
         recall_id: recallId,

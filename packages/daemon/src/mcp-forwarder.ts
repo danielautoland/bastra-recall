@@ -372,6 +372,11 @@ async function callRecallStreaming(
   if (typeof a.k === "number") body.k = a.k;
   if (typeof a.scope === "string") body.scope = a.scope;
   if (typeof a.type === "string") body.type = a.type;
+  // MCP-Pfad: genau k Hits, keine 1-Hop-Nachbarn (#50). Der /hook/recall-
+  // Default ist 1 (gut für die PreToolUse-Hook-CLI), aber für den vom Modell
+  // ausgelösten recall verdoppeln die Nachbarn nur den Context. Das Modell
+  // kann expand_hops:1 explizit anfordern, wenn es Related-Memories will.
+  body.expand_hops = typeof a.expand_hops === "number" ? a.expand_hops : 0;
 
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -404,7 +409,6 @@ async function callRecallStreaming(
   let buf = "";
   let payload: HookRecallDonePayload | null = null;
   let errorMsg: string | null = null;
-  const stageTimings: Record<string, number | boolean> = {};
 
   try {
     for (;;) {
@@ -427,10 +431,6 @@ async function callRecallStreaming(
             meta: d.meta,
           };
           await onStage(stage);
-          if (stage.name === "cache.hit") stageTimings.cache_hit = true;
-          else if (stage.durationMs !== undefined) {
-            stageTimings[`${stage.name.replace(/\./g, "_")}_ms`] = stage.durationMs;
-          }
         } else if (evt.type === "done") {
           payload = evt.data as HookRecallDonePayload;
         } else if (evt.type === "error") {
@@ -445,13 +445,15 @@ async function callRecallStreaming(
   if (errorMsg) throw new Error(errorMsg);
   if (!payload) throw new Error("daemon /hook/recall ended without done event");
 
+  // No `stages` block in the tool-result (#50): stage events already drove
+  // the live progress channel via onStage; the timing map would just bloat
+  // the context Claude reads. Debug timings live in /api/v1/recall + telemetry.
   return {
     query: body.query,
     vault_size: payload.vault_size,
     hits: payload.hits,
     recall_id: payload.recall_id,
     latency_ms: payload.latency_ms,
-    stages: stageTimings,
   };
 }
 

@@ -60,6 +60,12 @@ export interface RecallEvent extends BaseEvent {
     staleness_rank_ms?: number;
     cache_hit?: boolean;
   };
+  /**
+   * Anzahl Hits, die unter dem Score-Floor (#50 / #9) lagen und nicht
+   * zurückgegeben wurden. Macht die Wirkung des Floors messbar. Optional —
+   * alte Events ohne Floor-Logik haben das Feld nicht.
+   */
+  dropped_below_floor?: number;
 }
 
 export interface LoadMemoryEvent extends BaseEvent {

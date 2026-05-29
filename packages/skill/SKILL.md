@@ -25,11 +25,13 @@ Call `recall(query, k=5)` proactively in these moments:
 | **User prompt touches a stored topic** | the prompt itself, optionally with project context |
 | **Before `save_memory`** | the title/topic — duplicate check |
 
+`recall` is **step 1 of two**: it returns lean candidates (`id, title, type, scope, summary, score`) — no bodies. Spend the `summary` + `score` to decide, then call `load_memory(id)` as **step 2 only for the candidates you actually need**. Loading every hit defeats the point and burns context. (Need the debug fields — `matched_terms`, `mode`, `hop`, `topic_path`, stage timings? Pass `verbosity: "full"`.)
+
 What to do with hits (interpret the score):
 
 - **Score ≥ ~100 with `recall_when` or title match** → call `load_memory(id)` and apply the lesson **before** writing code or responding. Never ignore a `lesson` hit at this band.
 - **Score 30–100** → read the summary; load only if directly relevant.
-- **Score < 30** → usually noise; skip unless the summary is a perfect topic match.
+- **Below ~30** → noise; `recall` already drops it (default floor). Raise `min_score` to surface only high-confidence candidates.
 
 Idempotent: don't reload a memory you've already loaded this turn.
 

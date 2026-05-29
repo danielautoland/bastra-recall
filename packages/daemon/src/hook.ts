@@ -43,8 +43,11 @@ import {
 const HOOK_TIMEOUT_MS = envInt("BASTRA_HOOK_TIMEOUT_MS", 250, "NEXUS_HOOK_TIMEOUT_MS");
 const DEFAULT_PORT = 6723;
 const HOOK_VERSION = "0.3.0";
-const SCORE_FLOOR = 30; // mirror SKILL.md: <30 is noise
-const MUST_LOAD_SCORE = 100; // hits at/above this are non-negotiable loads
+const SCORE_FLOOR = envInt("BASTRA_RECALL_FLOOR", 30); // mirror SKILL.md: <30 is noise
+// Hits at/above this are non-negotiable loads. #9 Stage C: env-tunable so we
+// can lift the REQUIRED band (e.g. to 130) from telemetry without a rebuild,
+// but the default stays 100 until the data says to raise it.
+const MUST_LOAD_SCORE = envInt("BASTRA_MUST_LOAD_SCORE", 100);
 
 interface ClaudeHookPayload {
   session_id?: string;

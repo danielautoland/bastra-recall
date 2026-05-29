@@ -355,10 +355,14 @@ async function main(): Promise<void> {
   // `.unref()` so the timer itself never keeps the process alive.
   if (idleShutdownMs > 0) {
     const tick = Math.min(idleShutdownMs, 60_000);
+    const idleLabel =
+      idleShutdownMs >= 60_000
+        ? `${Math.round(idleShutdownMs / 60000)}min`
+        : `${Math.round(idleShutdownMs / 1000)}s`;
     const idleTimer = setInterval(() => {
       if (Date.now() - lastActivityMs >= idleShutdownMs) {
         console.error(
-          `[bastra-recall] idle for ${Math.round(idleShutdownMs / 60000)}min — self-terminating (respawns on next recall)`,
+          `[bastra-recall] idle for ${idleLabel} — self-terminating (respawns on next recall)`,
         );
         void shutdown();
       }

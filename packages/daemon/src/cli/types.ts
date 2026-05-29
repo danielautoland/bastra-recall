@@ -39,6 +39,6 @@ export interface ParsedArgs {
   vaultPath: string | null;
   showHelp: boolean;
   showVersion: boolean;
-  json?: boolean;   
-  quiet?: boolean;
+  json: boolean;   
+  quiet: boolean;
 }

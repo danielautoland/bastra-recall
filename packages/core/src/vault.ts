@@ -31,18 +31,46 @@ export class Vault {
   constructor(public readonly root: string) {}
 
   async init(): Promise<{ loaded: number; skipped: { path: string; err: string }[] }> {
-    const files = await this.listMarkdownFiles();
+    // Reihenfolge stabil halten: nach Pfad sortieren bevor wir parallel laden.
+    // So bleibt die Map-Iterationsordnung deterministisch (Maps iterieren in
+    // Insertion-Order; wir setzen die Ergebnisse in Pfad-Sortierreihenfolge).
+    const files = (await this.listMarkdownFiles()).slice().sort();
     const skipped: { path: string; err: string }[] = [];
-    for (const f of files) {
-      try {
-        const m = await this.read(f);
-        this.memorys.set(m.fm.id, m);
-        this.filePathToId.set(f, m.fm.id);
-      } catch (err) {
-        // Plain notes (no memory `type:`) are not errors — just not ours.
-        if (err instanceof NotAMemoryFile) continue;
-        skipped.push({ path: f, err: (err as Error).message });
+    const BATCH = 32;
+    type Loaded = { kind: "ok"; file: string; memory: Memory };
+    type Skipped = { kind: "skip" };
+    type Failed = { kind: "fail"; file: string; err: string };
+    const results: (Loaded | Skipped | Failed)[] = new Array(files.length);
+    for (let i = 0; i < files.length; i += BATCH) {
+      const chunk = files.slice(i, i + BATCH);
+      const settled = await Promise.allSettled(
+        chunk.map((f) => this.read(f)),
+      );
+      for (let j = 0; j < settled.length; j++) {
+        const s = settled[j];
+        const f = chunk[j];
+        if (s.status === "fulfilled") {
+          results[i + j] = { kind: "ok", file: f, memory: s.value };
+        } else {
+          const err = s.reason;
+          if (err instanceof NotAMemoryFile) {
+            results[i + j] = { kind: "skip" };
+          } else {
+            const msg = (err as Error).message ?? String(err);
+            console.warn(`[vault] init skipped (${basename(f)}): ${msg}`);
+            results[i + j] = { kind: "fail", file: f, err: msg };
+          }
+        }
       }
+    }
+    // Insertion in Pfad-Sortierreihenfolge → deterministische Map-Iteration.
+    for (const r of results) {
+      if (!r || r.kind !== "ok") {
+        if (r && r.kind === "fail") skipped.push({ path: r.file, err: r.err });
+        continue;
+      }
+      this.memorys.set(r.memory.fm.id, r.memory);
+      this.filePathToId.set(r.file, r.memory.fm.id);
     }
     return { loaded: this.memorys.size, skipped };
   }

@@ -9,11 +9,13 @@
   },
   "workspaces": [
     "packages/core",
-    "packages/daemon"
+    "packages/daemon",
+    "packages/statusline"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "check:types": "npm run check:types --workspaces --if-present",
+    "test": "node --import tsx --test packages/core/__tests__/*.test.ts packages/daemon/__tests__/*.test.ts",
     "smoke": "npm run smoke --workspace=@bastra-recall/daemon",
     "smoke:telemetry": "npm run smoke:telemetry --workspace=@bastra-recall/daemon"
   }

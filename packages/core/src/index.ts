@@ -11,6 +11,12 @@ export type { VaultEvent, VaultListener } from "./vault.js";
 export { SearchIndex } from "./search.js";
 export type { RecallHit, RecallOptions } from "./search.js";
 
+export type { RecallStage, StageListener } from "./recall-stages.js";
+export { RECALL_STAGE_ORDER, progressIndexFor } from "./recall-stages.js";
+
+export { pickPhrase, banterModeFromEnv } from "./recall-banter.js";
+export type { BanterMode, BanterLang } from "./recall-banter.js";
+
 export {
   saveMemory,
   deleteMemoryFile,
@@ -57,6 +63,9 @@ export {
   fuseRRF,
 } from "./embeddings.js";
 export type { EmbeddingProvider, EmbeddingHit, EmbedListener } from "./embeddings.js";
+
+export { EmbedCache, hashEmbedContent } from "./embed-cache.js";
+export type { EmbedCacheEntry, EmbedCacheFile } from "./embed-cache.js";
 
 export { RelatedEnricher } from "./related-enrich.js";
 export type { RelatedEnricherOptions } from "./related-enrich.js";

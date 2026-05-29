@@ -42,7 +42,7 @@
  */
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Vault, SearchIndex } from "@bastra-recall/core";
+import type { Vault, SearchIndex, RecallStage, StageListener } from "@bastra-recall/core";
 import { fireAndForget, type Telemetry } from "./telemetry.js";
 import {
   recallHandler,
@@ -66,6 +66,7 @@ import {
   recategorizeDocument,
   moveDocument,
 } from "./documents-write-handler.js";
+import { getUpdateState } from "./update-check.js";
 
 export interface HttpOptions {
   port: number;
@@ -119,10 +120,19 @@ export async function startHttpServer(opts: HttpOptions): Promise<HttpHandle> {
     }
 
     if (method === "GET" && url === "/health") {
+      const updateState = getUpdateState();
       sendJson(res, 200, {
         ok: true,
         vault_size: vault.size(),
         version,
+        update_available: updateState && updateState.hasUpdate
+          ? {
+              current: updateState.current,
+              latest: updateState.latest,
+              html_url: updateState.html_url,
+              published_at: updateState.published_at,
+            }
+          : null,
       });
       return;
     }
@@ -223,11 +233,24 @@ function handleHookRecall(
   search: SearchIndex,
   telemetry: Telemetry,
 ): void {
+  // SSE-Branch (#38): wenn der Caller `Accept: text/event-stream`
+  // sendet, streamen wir Stages live. Default-JSON-Response bleibt
+  // BC-erhalten — alte Hook-CLIs und REST-Caller sehen keinen
+  // Unterschied.
+  const accept = String(req.headers.accept ?? "");
+  const wantsSse = accept.includes("text/event-stream");
+
   readJsonBody(req, MAX_BODY_BYTES)
     .then(async (body) => {
       const query = typeof body.query === "string" ? body.query.trim() : "";
       if (!query) {
-        sendJson(res, 400, { error: "query is required" });
+        if (wantsSse) {
+          openSseHeaders(res);
+          writeSseEvent(res, "error", { error: "query is required" });
+          res.end();
+        } else {
+          sendJson(res, 400, { error: "query is required" });
+        }
         return;
       }
       const k = clampInt(body.k, 1, 10, 3);
@@ -238,10 +261,49 @@ function handleHookRecall(
       // Caller kann explizit 0 schicken um es zu deaktivieren.
       const expand_hops = body.expand_hops === 0 ? 0 : 1;
 
+      const stageTimings: NonNullable<Parameters<Telemetry["logHookRecall"]>[0]["recall_stages"]> = {};
+      const collectStage = (s: RecallStage): void => {
+        if (s.name === "cache.hit") {
+          stageTimings.cache_hit = true;
+          return;
+        }
+        if (s.durationMs === undefined) return;
+        switch (s.name) {
+          case "query.parse": stageTimings.query_parse_ms = s.durationMs; break;
+          case "bm25.search": stageTimings.bm25_search_ms = s.durationMs; break;
+          case "vector.search": stageTimings.vector_search_ms = s.durationMs; break;
+          case "rrf.fuse": stageTimings.rrf_fuse_ms = s.durationMs; break;
+          case "hops.expand": stageTimings.hops_expand_ms = s.durationMs; break;
+          case "staleness.rank": stageTimings.staleness_rank_ms = s.durationMs; break;
+        }
+      };
+
+      if (wantsSse) {
+        openSseHeaders(res);
+      }
+
+      const onStage: StageListener = (s: RecallStage) => {
+        collectStage(s);
+        if (wantsSse) {
+          // Nur Stop- + cache.hit + done-Events streamen (Start-Events
+          // wären für UI redundant). `done`-Event kommt unten als
+          // separater finaler SSE-Event mit den hits[] — wir
+          // unterdrücken den Stage-`done`, damit der finale Frame
+          // nicht doppelt rendert.
+          if (s.name === "done") return;
+          if (s.durationMs === undefined && s.name !== "cache.hit") return;
+          writeSseEvent(res, "stage", {
+            name: s.name,
+            durationMs: s.durationMs,
+            meta: s.meta,
+          });
+        }
+      };
+
       const tRecall0 = Date.now();
       const hits = search.hasEmbeddings()
-        ? await search.recallHybrid(query, { k, scope, type, expand_hops })
-        : search.recall(query, { k, scope, type, expand_hops });
+        ? await search.recallHybrid(query, { k, scope, type, expand_hops, onStage })
+        : search.recall(query, { k, scope, type, expand_hops, onStage });
       const recallLatencyMs = Date.now() - tRecall0;
       const totalLatencyMs = Date.now() - t0;
       const recallId = telemetry.newRecallId();
@@ -265,19 +327,53 @@ function handleHookRecall(
           hits: hits.map((h) => ({ id: h.id, score: h.score, type: h.type })),
           latency_ms_recall: recallLatencyMs,
           latency_ms_total: totalLatencyMs,
+          recall_stages: stageTimings,
         }),
       );
 
-      sendJson(res, 200, {
+      const payload = {
         hits,
         vault_size: vault.size(),
         latency_ms: totalLatencyMs,
         recall_id: recallId,
-      });
+      };
+      if (wantsSse) {
+        writeSseEvent(res, "done", payload);
+        res.end();
+      } else {
+        sendJson(res, 200, payload);
+      }
     })
     .catch((err: Error) => {
-      sendJson(res, 400, { error: err.message });
+      if (wantsSse && !res.headersSent) {
+        openSseHeaders(res);
+      }
+      if (wantsSse) {
+        writeSseEvent(res, "error", { error: err.message });
+        res.end();
+      } else {
+        sendJson(res, 400, { error: err.message });
+      }
     });
+}
+
+// ─── SSE helpers ─────────────────────────────────────────────────
+
+function openSseHeaders(res: ServerResponse): void {
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  // Disable Nagle for prompt event delivery on local connections.
+  res.setHeader("X-Accel-Buffering", "no");
+  res.writeHead(200);
+  // First chunk forces headers to flush so curl/test clients see them
+  // before the first stage event lands.
+  res.write(":ok\n\n");
+}
+
+function writeSseEvent(res: ServerResponse, event: string, data: unknown): void {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
 // ─── /api/v1 dispatcher ──────────────────────────────────────────

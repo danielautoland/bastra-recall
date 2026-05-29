@@ -1,0 +1,30 @@
+{
+  "name": "@bastra-recall/statusline",
+  "version": "0.1.0",
+  "description": "bastra-recall statusline for Claude Code. Statusline engine: owloops/claude-powerline (MIT), with the bastra-status segment built in.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./dist/index.mjs",
+  "bin": {
+    "bastra-statusline": "./bin/claude-powerline"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "src",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "check:types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsdown": "^0.21.4",
+    "typescript": "^5.7.2"
+  }
+}

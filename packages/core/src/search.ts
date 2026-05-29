@@ -3,6 +3,7 @@ import type { Memory } from "./schema.js";
 import type { Vault, VaultEvent } from "./vault.js";
 import type { EmbeddingIndex } from "./embeddings.js";
 import { fuseRRF } from "./embeddings.js";
+import type { RecallStage, StageListener } from "./recall-stages.js";
 
 export interface RecallHit {
   id: string;
@@ -37,6 +38,15 @@ export interface RecallOptions {
    * `hop: "1-hop"`.
    */
   expand_hops?: 0 | 1;
+  /**
+   * Stage-Event-Listener (#38). Wenn gesetzt, emittiert die Recall-
+   * Pipeline pro Schritt einen Start- + Stop-Event (`query.parse`,
+   * `bm25.search`, `vector.search`, `rrf.fuse`, `hops.expand`,
+   * `staleness.rank`, `done`). Bei Query-Cache-Hits feuert zusätzlich
+   * ein `cache.hit`-Event mit `meta.cache = "query"` — danach folgt
+   * direkt `done`. Null-Overhead, wenn nicht gesetzt.
+   */
+  onStage?: StageListener;
 }
 
 interface IndexDoc {
@@ -65,6 +75,25 @@ export class SearchIndex {
   private mini: MiniSearch<IndexDoc>;
   private detach?: () => void;
   private embeddings?: EmbeddingIndex;
+
+  // Staleness-Cache (#29): `computeStaleness()` parsed Date-Strings und
+  // rechnet Ratio-Logik — pro Recall × Hit-Count summiert sich das. Cache
+  // ist memId → { touchTs, status, computedAt }. Invalidiert in `handle()`
+  // bei change/remove, plus 12h-TTL gegen Tageswechsel (`aging → stale`
+  // ohne Vault-Change).
+  private stalenessCache = new Map<
+    string,
+    { touchTs: number; status: StaleStatus; computedAt: number }
+  >();
+  private static readonly STALENESS_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+
+  // Query-Cache (#30): MiniSearch tokenisiert die Query bei jedem
+  // `recall()` neu. Hooks rufen häufig mit identischer Query auf
+  // (detectTopics() ist deterministisch). LRU via Map-insertion-order,
+  // hard cap 100 Einträge, TTL 30s. Vault-Change leert komplett.
+  private queryCache = new Map<string, { hits: RecallHit[]; at: number }>();
+  private static readonly QUERY_CACHE_MAX = 100;
+  private static readonly QUERY_CACHE_TTL_MS = 30_000;
 
   constructor(private readonly vault: Vault) {
     this.mini = new MiniSearch<IndexDoc>({
@@ -127,8 +156,36 @@ export class SearchIndex {
 
   recall(query: string, opts: RecallOptions = {}): RecallHit[] {
     const k = opts.k ?? 5;
-    if (!query.trim()) return [];
+    const stage = new StageEmitter(opts.onStage);
+    const recallStart = Date.now();
+
+    const tParse = stage.start("query.parse");
+    if (!query.trim()) {
+      stage.end("query.parse", tParse);
+      stage.emit("done", recallStart, { hit_count: 0, vault_size: this.mini.documentCount, total_ms: 0 });
+      return [];
+    }
+    stage.end("query.parse", tParse);
+
+    // Query-Cache (#30) — bei Hit komplett überspringen, inkl. Hop-
+    // Expansion und Staleness-Reranking. Cache speichert das finale
+    // RecallHit[], nicht den BM25-Roh-Output.
+    const cacheKey = `recall|${query}|${JSON.stringify(opts)}`;
+    const cached = this.lookupQueryCache(cacheKey);
+    if (cached) {
+      stage.emit("cache.hit", recallStart, { cache: "query", hit_count: cached.length });
+      stage.emit("done", recallStart, {
+        hit_count: cached.length,
+        vault_size: this.mini.documentCount,
+        total_ms: Date.now() - recallStart,
+        cached: true,
+      });
+      return cached;
+    }
+
+    const tBm = stage.start("bm25.search");
     const raw = this.mini.search(query);
+    stage.end("bm25.search", tBm, { raw_hit_count: raw.length });
 
     const filtered = raw.filter((r) => {
       if (!passesRecallFilters(r, opts)) return false;
@@ -153,10 +210,28 @@ export class SearchIndex {
     }));
     const direct = directFull.slice(0, k);
 
-    const withHops = opts.expand_hops === 1
-      ? [...direct, ...this.collectOneHopNeighbors(directFull, opts, new Set(direct.map((h) => h.id))).slice(0, k)]
-      : direct;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    let withHops: RecallHit[];
+    if (opts.expand_hops === 1) {
+      const tHops = stage.start("hops.expand");
+      const neighbors = this.collectOneHopNeighbors(directFull, opts, new Set(direct.map((h) => h.id))).slice(0, k);
+      stage.end("hops.expand", tHops, { hop_count: neighbors.length });
+      withHops = [...direct, ...neighbors];
+    } else {
+      withHops = direct;
+    }
+
+    const tStale = stage.start("staleness.rank");
+    const ranked = this.applyStaleness(withHops);
+    stage.end("staleness.rank", tStale, { reranked_count: ranked.length });
+
+    this.storeQueryCache(cacheKey, ranked);
+
+    stage.emit("done", recallStart, {
+      hit_count: ranked.length,
+      vault_size: this.mini.documentCount,
+      total_ms: Date.now() - recallStart,
+    });
+    return ranked;
   }
 
   /** Hybrid-Recall: BM25 + Vector via Reciprocal-Rank-Fusion. Wenn kein
@@ -166,13 +241,32 @@ export class SearchIndex {
   async recallHybrid(query: string, opts: RecallOptions = {}): Promise<RecallHit[]> {
     if (!this.embeddings) return this.recall(query, opts);
     const k = opts.k ?? 5;
-    if (!query.trim()) return [];
+    const stage = new StageEmitter(opts.onStage);
+    const recallStart = Date.now();
+
+    const tParse = stage.start("query.parse");
+    if (!query.trim()) {
+      stage.end("query.parse", tParse);
+      stage.emit("done", recallStart, { hit_count: 0, vault_size: this.mini.documentCount, total_ms: 0 });
+      return [];
+    }
+    stage.end("query.parse", tParse);
+
+    // Query-Cache (#30) — eigener Key-Prefix damit BM25-only und Hybrid
+    // sich nicht gegenseitig überschreiben (gleicher Query-String,
+    // anderes Ranking-Ergebnis).
+    const cacheKey = `hybrid|${query}|${JSON.stringify(opts)}`;
+    const cached = this.lookupQueryCache(cacheKey);
+    if (cached) return cached;
 
     // BM25 — top 50 für RRF-Pool.
+    const tBm = stage.start("bm25.search");
     const bm25 = this.mini.search(query).filter((r) => passesRecallFilters(r, opts));
     const bm25Top = bm25.slice(0, 50);
+    stage.end("bm25.search", tBm, { raw_hit_count: bm25.length });
 
     // Vector — top 50 für RRF-Pool, plus type/scope/sensitivity-Filter über vault.
+    const tVec = stage.start("vector.search");
     const vec = await this.embeddings.search(query, 100);
     const vectorTop = vec
       .map((h) => ({ hit: h, mem: this.vault.get(h.id) }))
@@ -190,7 +284,9 @@ export class SearchIndex {
         return true;
       })
       .slice(0, 50);
+    stage.end("vector.search", tVec, { vector_hit_count: vectorTop.length });
 
+    const tFuse = stage.start("rrf.fuse");
     const bm25Ids = bm25Top.map((r) => r.id as string);
     const vectorIds = vectorTop.map(({ hit }) => hit.id);
     const fused = fuseRRF(bm25Ids, vectorIds);
@@ -226,11 +322,31 @@ export class SearchIndex {
         hop: "direct" as const,
       });
     }
+    stage.end("rrf.fuse", tFuse, { fused_count: outFull.length });
+
     const out = outFull.slice(0, k);
-    const withHops = opts.expand_hops === 1
-      ? [...out, ...this.collectOneHopNeighbors(outFull, opts, new Set(out.map((h) => h.id))).slice(0, k)]
-      : out;
-    return applyStalenessMultiplier(withHops, (id) => this.vault.get(id)?.fm as Record<string, unknown> | undefined);
+    let withHops: RecallHit[];
+    if (opts.expand_hops === 1) {
+      const tHops = stage.start("hops.expand");
+      const neighbors = this.collectOneHopNeighbors(outFull, opts, new Set(out.map((h) => h.id))).slice(0, k);
+      stage.end("hops.expand", tHops, { hop_count: neighbors.length });
+      withHops = [...out, ...neighbors];
+    } else {
+      withHops = out;
+    }
+
+    const tStale = stage.start("staleness.rank");
+    const ranked = this.applyStaleness(withHops);
+    stage.end("staleness.rank", tStale, { reranked_count: ranked.length });
+
+    this.storeQueryCache(cacheKey, ranked);
+
+    stage.emit("done", recallStart, {
+      hit_count: ranked.length,
+      vault_size: this.mini.documentCount,
+      total_ms: Date.now() - recallStart,
+    });
+    return ranked;
   }
 
   /**
@@ -300,6 +416,11 @@ export class SearchIndex {
 
   private handle(e: VaultEvent): void {
     if (e.kind === "remove") {
+      // Staleness-Cache invalidieren (#29) — memId genügt.
+      this.stalenessCache.delete(e.id);
+      // Query-Cache komplett leeren (#30) — selektive Invalidierung wäre
+      // ein eigenes Ranking-Problem und Vault-Changes sind selten.
+      this.queryCache.clear();
       try {
         this.mini.discard(e.id);
       } catch {
@@ -308,13 +429,87 @@ export class SearchIndex {
       return;
     }
     if (e.kind === "change") {
+      this.stalenessCache.delete(e.memory.fm.id);
+      this.queryCache.clear();
       try {
         this.mini.discard(e.memory.fm.id);
       } catch {
         // first time; treat as add
       }
+    } else if (e.kind === "add") {
+      // Neue Memory könnte BM25-Ranking aller bestehenden Queries
+      // verändern → Query-Cache leeren. Staleness wird ohnehin lazy
+      // beim nächsten Recall berechnet.
+      this.queryCache.clear();
     }
     this.indexOne(e.memory);
+  }
+
+  /**
+   * Staleness-Reranking mit Per-Memory-Cache (#29). Cache-Key ist die
+   * memId — invalidiert in `handle()` bei change/remove. Zusätzlich
+   * 12h-TTL gegen Tageswechsel-Flips (`aging → stale` ohne Vault-Change).
+   *
+   * Behält die Sortier-Semantik von `applyStalenessMultiplier`: Direct-
+   * vs 1-hop-Hits bleiben getrennt sortiert.
+   */
+  private applyStaleness(hits: RecallHit[], now: Date = new Date()): RecallHit[] {
+    const nowMs = now.getTime();
+    for (const h of hits) {
+      const fm = this.vault.get(h.id)?.fm as Record<string, unknown> | undefined;
+      if (!fm) continue;
+      const touchTs = computeTouchTs(fm);
+      let entry = this.stalenessCache.get(h.id);
+      const ttlExpired =
+        entry != null && nowMs - entry.computedAt > SearchIndex.STALENESS_CACHE_TTL_MS;
+      if (!entry || entry.touchTs !== touchTs || ttlExpired) {
+        const status = computeStaleness(fm, now);
+        entry = { touchTs, status, computedAt: nowMs };
+        this.stalenessCache.set(h.id, entry);
+      }
+      const mult = STALE_MULTIPLIERS[entry.status];
+      if (mult !== 1.0) h.score = round(h.score * mult);
+    }
+    const direct = hits.filter((h) => h.hop !== "1-hop");
+    const hops = hits.filter((h) => h.hop === "1-hop");
+    direct.sort((a, b) => b.score - a.score);
+    hops.sort((a, b) => b.score - a.score);
+    return [...direct, ...hops];
+  }
+
+  /**
+   * LRU-Lookup für `queryCache` (#30). Bei Hit wird der Eintrag
+   * re-inserted, damit die Map-insertion-order ihn als „recently used"
+   * sieht. TTL 30s — frische Edits sollen den Cache nicht zu lange
+   * dominieren, auch wenn der Watcher nicht feuert.
+   */
+  private lookupQueryCache(key: string): RecallHit[] | undefined {
+    const cached = this.queryCache.get(key);
+    if (!cached) return undefined;
+    if (Date.now() - cached.at > SearchIndex.QUERY_CACHE_TTL_MS) {
+      this.queryCache.delete(key);
+      return undefined;
+    }
+    // LRU-Bump: löschen + neu setzen, damit Map-iteration den Eintrag
+    // als jüngsten sieht.
+    this.queryCache.delete(key);
+    this.queryCache.set(key, cached);
+    // Defensive Kopie — Caller könnte das Array mutieren (sortieren,
+    // pushen). Cache-Werte bleiben damit stabil über Calls hinweg.
+    return cached.hits.map((h) => ({ ...h }));
+  }
+
+  private storeQueryCache(key: string, hits: RecallHit[]): void {
+    if (this.queryCache.size >= SearchIndex.QUERY_CACHE_MAX) {
+      // Oldest first — Map preserved insertion order.
+      const oldest = this.queryCache.keys().next().value;
+      if (oldest !== undefined) this.queryCache.delete(oldest);
+    }
+    // Tiefen-Kopie der Hits, gleicher Grund wie in lookupQueryCache.
+    this.queryCache.set(key, {
+      hits: hits.map((h) => ({ ...h })),
+      at: Date.now(),
+    });
   }
 
   private indexOne(m: Memory): void {
@@ -362,6 +557,45 @@ function passesRecallFilters(
 
 function round(n: number): number {
   return Math.round(n * 1000) / 1000;
+}
+
+// MARK: - Stage-Event-Emitter (#38)
+
+/**
+ * Hilfsklasse für Stage-Events in `recall` / `recallHybrid`. Hält den
+ * optionalen Listener und liefert `start()`/`end()`/`emit()`. Bei
+ * fehlendem Listener sind alle Methoden no-op und allokationsfrei
+ * (kein `Date.now()` ohne Bedarf). Die Klasse lebt nur in `search.ts`,
+ * weil sie tight an die Stage-Sequenz gekoppelt ist — die public Types
+ * stehen in `recall-stages.ts`.
+ */
+class StageEmitter {
+  constructor(private readonly listener?: StageListener) {}
+
+  /** Start-Event feuern. Liefert den Start-Timestamp, der unverändert
+   *  an `end()` zurückgegeben wird (so muss der Caller kein lokales
+   *  `const t = Date.now()` aufmachen). */
+  start(name: RecallStage["name"], meta?: Record<string, unknown>): number {
+    if (!this.listener) return 0;
+    const t = Date.now();
+    this.listener({ name, startedAtMs: t, meta });
+    return t;
+  }
+
+  /** Stop-Event feuern. `startedAt` ist der Rückgabewert von `start()`. */
+  end(name: RecallStage["name"], startedAt: number, meta?: Record<string, unknown>): void {
+    if (!this.listener) return;
+    const dur = Date.now() - startedAt;
+    this.listener({ name, startedAtMs: startedAt, durationMs: dur, meta });
+  }
+
+  /** One-shot-Event (kein separates Stop) — für `cache.hit`, `done`,
+   *  `error`. `startedAtMs` ist der „Recall-Start" (für `done`) oder
+   *  der Event-Zeitpunkt selbst. */
+  emit(name: RecallStage["name"], startedAtMs: number, meta?: Record<string, unknown>): void {
+    if (!this.listener) return;
+    this.listener({ name, startedAtMs, durationMs: Date.now() - startedAtMs, meta });
+  }
 }
 
 // MARK: - Lifecycle-Reranking (#74)
@@ -449,6 +683,19 @@ function parseDateValue(raw: unknown): number | null {
     return Number.isNaN(t) ? null : t;
   }
   return null;
+}
+
+/**
+ * „Touch-Timestamp" einer Memory: jüngeres aus `updated` und
+ * `last_reviewed_at`. Wird vom Staleness-Cache (#29) als Identitäts-
+ * Stempel benutzt — ändert sich der touchTs, wird der Cache-Eintrag
+ * neu berechnet, auch ohne Vault-Event (z.B. wenn die Mac-App die
+ * Frontmatter direkt patcht).
+ */
+function computeTouchTs(fm: Record<string, unknown>): number {
+  const updated = parseDateValue(fm.updated) ?? 0;
+  const lastReviewed = parseDateValue(fm.last_reviewed_at) ?? 0;
+  return Math.max(updated, lastReviewed);
 }
 
 /**

@@ -10,8 +10,16 @@
  * Vault-Mutation — kein doppelter Code, kein Drift.
  */
 import { z } from "zod";
-import { saveMemory, SaveMemoryInput, type Vault, type SearchIndex } from "@bastra-recall/core";
+import {
+  saveMemory,
+  SaveMemoryInput,
+  type Vault,
+  type SearchIndex,
+  type StageListener,
+  type RecallStage,
+} from "@bastra-recall/core";
 import { Telemetry, fireAndForget } from "./telemetry.js";
+import { touchLoadedMarker } from "./session-state.js";
 
 export interface ToolDeps {
   vault: Vault;
@@ -62,20 +70,76 @@ export interface RecallResult {
   latency_ms: number;
 }
 
+/**
+ * Pro-Stage-Dauern in ms (#38). Caller-agnostisch — sowohl der
+ * MCP-Stdio-Handler als auch HTTP-SSE und der Telemetry-Pfad bekommen
+ * dieselben Bucket-Namen. Wird in `recall_call`-JSONL-Logs als
+ * `recall_stages` mitgeschrieben, um Bottlenecks zu identifizieren.
+ */
+export interface RecallStageTimings {
+  query_parse_ms?: number;
+  bm25_search_ms?: number;
+  vector_search_ms?: number;
+  rrf_fuse_ms?: number;
+  hops_expand_ms?: number;
+  staleness_rank_ms?: number;
+  cache_hit?: boolean;
+}
+
+/** Stage-Namen → ms-Bucket in `RecallStageTimings`. `cache_hit` ist
+ *  bewusst nicht hier — der ist ein boolean und wird separat gesetzt. */
+type StageMsKey = "query_parse_ms" | "bm25_search_ms" | "vector_search_ms" | "rrf_fuse_ms" | "hops_expand_ms" | "staleness_rank_ms";
+
+const STAGE_TO_TIMING_KEY: Partial<Record<RecallStage["name"], StageMsKey>> = {
+  "query.parse": "query_parse_ms",
+  "bm25.search": "bm25_search_ms",
+  "vector.search": "vector_search_ms",
+  "rrf.fuse": "rrf_fuse_ms",
+  "hops.expand": "hops_expand_ms",
+  "staleness.rank": "staleness_rank_ms",
+};
+
+/**
+ * Sammelt Stage-Timings und fan-out zu einem optional externen Listener
+ * (MCP-progress-notification oder HTTP-SSE). Der Caller bekommt die
+ * Stage-Bucket-Map zurück, sobald `recall()` resolved ist — die Werte
+ * landen dann in der Telemetrie.
+ */
+function makeStageCollector(forward?: StageListener): { listener: StageListener; timings: RecallStageTimings } {
+  const timings: RecallStageTimings = {};
+  const listener: StageListener = (stage: RecallStage) => {
+    forward?.(stage);
+    if (stage.name === "cache.hit") {
+      timings.cache_hit = true;
+      return;
+    }
+    if (stage.durationMs === undefined) return;
+    const key = STAGE_TO_TIMING_KEY[stage.name];
+    if (!key) return;
+    // Stop-Events kommen nach Start-Events — durch das Überschreiben
+    // (statt += ) bleibt der finale Wert die echte Dauer.
+    timings[key] = stage.durationMs;
+  };
+  return { listener, timings };
+}
+
 export async function recallHandler(
   deps: ToolDeps,
   rawArgs: unknown,
-): Promise<RecallResult> {
+  options: { onStage?: StageListener } = {},
+): Promise<RecallResult & { stages?: RecallStageTimings }> {
   const parsed = RecallArgs.safeParse(rawArgs);
   if (!parsed.success) throw new Error(parsed.error.message);
 
   const t0 = Date.now();
+  const collector = makeStageCollector(options.onStage);
   const recallOpts = {
     k: parsed.data.k,
     scope: parsed.data.scope,
     type: parsed.data.type,
     allow_private: parsed.data.allow_private ?? false,
     expand_hops: parsed.data.expand_hops as 0 | 1 | undefined,
+    onStage: collector.listener,
   };
   const hits = deps.search.hasEmbeddings()
     ? await deps.search.recallHybrid(parsed.data.query, recallOpts)
@@ -94,6 +158,7 @@ export async function recallHandler(
       top_score: hits[0]?.score ?? null,
       hits: hits.map((h) => ({ id: h.id, score: h.score, type: h.type })),
       latency_ms: latencyMs,
+      recall_stages: collector.timings,
     }),
   );
 
@@ -103,6 +168,7 @@ export async function recallHandler(
     hits,
     recall_id: recallId,
     latency_ms: latencyMs,
+    stages: collector.timings,
   };
 }
 
@@ -146,6 +212,11 @@ export async function loadMemoryHandler(
   ) {
     throw new Error(`memory not found: ${parsed.data.id}`);
   }
+
+  // Reset-signal for the hook's per-session dedup (#32): touch a marker
+  // file so the next hook invocation knows the agent has consumed this
+  // memory and the dedup clock should restart.
+  fireAndForget(touchLoadedMarker(parsed.data.id));
 
   return {
     id: m.fm.id,

@@ -56,8 +56,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     vaultPath: null,
     showHelp: false,
     showVersion: false,
-    json: false,   
-    quiet: false,  
+    json: false,
+    quiet: false,
+    yes: false,
   };
 
   const positional: string[] = [];
@@ -66,8 +67,9 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (a === "--help" || a === "-h") result.showHelp = true;
     else if (a === "--version" || a === "-v") result.showVersion = true;
     else if (a === "--dry-run") result.dryRun = true;
-    else if (a === "--json") result.json = true;            
-    else if (a === "-q" || a === "--quiet") result.quiet = true; 
+    else if (a === "--json") result.json = true;
+    else if (a === "-q" || a === "--quiet") result.quiet = true;
+    else if (a === "--yes" || a === "-y") result.yes = true;
     else if (a === "--vault") {
       result.vaultPath = argv[++i] ?? null;
     } else if (a.startsWith("--vault=")) {
@@ -168,4 +170,4 @@ export async function cmdDoctor(args: ParsedArgs): Promise<number> {
   return 0;
 }
 
-export { cmdStatus } from "./status.js"; 
+export { cmdStatus } from "./status.js";

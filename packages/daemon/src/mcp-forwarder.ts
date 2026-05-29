@@ -44,10 +44,19 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { spawn } from "node:child_process";
 import * as path from "node:path";
+import * as fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  pickPhrase,
+  banterModeFromEnv,
+  progressIndexFor,
+  RECALL_STAGE_ORDER,
+  type RecallStage,
+} from "@bastra-recall/core";
 import { MEMORY_TOOL_DEFS } from "./tool-handlers.js";
 import { documentTools } from "./documents-handler.js";
 import { documentWriteTools } from "./documents-write-handler.js";
+import { claudeSessionPid, sessionFeedPath, STATUSLINE_DIR } from "./statusline-session.js";
 
 const DAEMON_URL = (process.env.BASTRA_DAEMON_URL ?? "http://127.0.0.1:6723").replace(/\/+$/, "");
 const API_TOKEN = process.env.BASTRA_API_TOKEN ?? "";
@@ -161,6 +170,20 @@ async function main(): Promise<void> {
   // Stdio-Server NICHT — Tool-Calls scheitern dann mit klarer Message.
   await ensureDaemonRunning();
 
+  // Seed the session statusline feed with the current vault size, so the
+  // idle banner shows "N memories" from session start (not "0 memories"
+  // until the first recall). Best-effort.
+  try {
+    const resp = await fetchWithTimeout(`${DAEMON_URL}/health`, {}, 1500);
+    const body = (await resp.json()) as { vault_size?: number };
+    if (typeof body.vault_size === "number") {
+      liveStatusline.vault_size = body.vault_size;
+      flushStatusline();
+    }
+  } catch {
+    // no health / no vault_size — idle banner shows 0 until first recall
+  }
+
   const server = new Server(
     { name: "bastra-recall-mcp", version: "0.1.0" },
     { capabilities: { tools: {} } },
@@ -173,8 +196,87 @@ async function main(): Promise<void> {
     tools: [...MEMORY_TOOL_DEFS, ...documentTools, ...documentWriteTools],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+  const banterMode = banterModeFromEnv(process.env);
+  const banterLang = (process.env.BASTRA_BANTER_LANG ?? "en").toLowerCase() === "de" ? "de" : "en";
+
+  server.setRequestHandler(CallToolRequestSchema, async (req, extra) => {
     const { name, arguments: args } = req.params;
+    const progressToken = (req.params as { _meta?: { progressToken?: string | number } })._meta
+      ?.progressToken;
+
+    // Streaming recall (#38 follow-up): if the client sent a progressToken
+    // and the call is `recall`, proxy via SSE against /hook/recall and
+    // forward stage events as `notifications/progress` to the client.
+    // Claude Code (and any MCP client that honors progress) renders these
+    // as live status lines under the tool call.
+    if (name === "recall") {
+      const recallStartedAt = Date.now();
+      // Statusline state-tracking runs for EVERY recall — independent of
+      // whether the client sent a progressToken. (Claude Code often omits
+      // it; the streaming SSE path against /hook/recall does not need it.)
+      // Adopt a fresh turn if the prompt-hook reset to idle, then mark this
+      // recall started. All mutations on in-memory liveStatusline — serial,
+      // no race across parallel recalls.
+      syncStatuslineTurn();
+      liveStatusline.state = "running";
+      liveStatusline.recall_count += 1;
+      liveStatusline.current_recall_started_at = recallStartedAt;
+      flushStatusline();
+      try {
+        const result = await callRecallStreaming(args, async (s: RecallStage) => {
+          // notifications/progress only when the client opted in via a
+          // progressToken. Claude Code drops them (bug #51713) — the
+          // statusline segment is the visible channel there.
+          if (progressToken !== undefined) {
+            const phrase = pickPhrase(s, banterMode, banterLang);
+            const dur = s.durationMs !== undefined ? `${s.durationMs}ms` : "";
+            const message = phrase
+              ? `${s.name} · ${dur} · ${phrase}`
+              : `${s.name}${dur ? ` · ${dur}` : ""}`;
+            await extra
+              .sendNotification({
+                method: "notifications/progress",
+                params: {
+                  progressToken,
+                  progress: progressIndexFor(s.name),
+                  total: RECALL_STAGE_ORDER.length,
+                  message,
+                },
+              })
+              .catch(() => undefined);
+          }
+          liveStatusline.current_stage = s.name;
+          liveStatusline.current_stage_started_at = Date.now();
+          flushStatusline();
+        });
+        // Recall complete: fold this recall's hits + duration into the turn
+        // totals, clear the current-recall marks.
+        const hits = (result as { hits?: unknown[] }).hits;
+        const vaultSize = (result as { vault_size?: number }).vault_size;
+        liveStatusline.total_hits += Array.isArray(hits) ? hits.length : 0;
+        liveStatusline.total_ms += Date.now() - recallStartedAt;
+        if (typeof vaultSize === "number") liveStatusline.vault_size = vaultSize;
+        liveStatusline.current_stage = null;
+        liveStatusline.current_stage_started_at = null;
+        liveStatusline.current_recall_started_at = null;
+        flushStatusline();
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (err) {
+        // On error: clear current-recall marks so the statusline doesn't
+        // hang on a stuck stage.
+        liveStatusline.current_stage = null;
+        liveStatusline.current_stage_started_at = null;
+        liveStatusline.current_recall_started_at = null;
+        flushStatusline();
+        return {
+          isError: true,
+          content: [{ type: "text" as const, text: (err as Error).message }],
+        };
+      }
+    }
+
     try {
       const result = await callDaemon(name, args);
       return {
@@ -225,6 +327,230 @@ async function fetchWithTimeout(
     return await fetch(url, { ...init, signal: ctrl.signal });
   } finally {
     clearTimeout(tid);
+  }
+}
+
+interface HookRecallDonePayload {
+  hits: unknown[];
+  vault_size: number;
+  latency_ms: number;
+  recall_id: string;
+}
+
+const VALID_STAGE_NAMES: ReadonlySet<RecallStage["name"]> = new Set([
+  "query.parse",
+  "cache.hit",
+  "bm25.search",
+  "vector.search",
+  "rrf.fuse",
+  "hops.expand",
+  "staleness.rank",
+  "done",
+  "error",
+]);
+
+/**
+ * Streaming recall path. Posts to `/hook/recall` with `Accept:
+ * text/event-stream`, parses SSE frames, fires `onStage` for each stage
+ * event, returns the final result shaped like `/api/v1/recall` so the
+ * client JSON is consistent regardless of which path was taken.
+ *
+ * Note: this reuses `/hook/recall` — that endpoint is open (no token)
+ * and already SSE-capable. The side-effect is that hook_recall telemetry
+ * gets logged for MCP recalls too; the `tool_name: "mcp-forwarder"`
+ * marker lets us filter those out later.
+ */
+async function callRecallStreaming(
+  args: unknown,
+  onStage: (s: RecallStage) => void | Promise<void>,
+): Promise<unknown> {
+  const a = (args ?? {}) as Record<string, unknown>;
+  const body: Record<string, unknown> = {
+    query: typeof a.query === "string" ? a.query : "",
+    tool_name: "mcp-forwarder",
+  };
+  if (typeof a.k === "number") body.k = a.k;
+  if (typeof a.scope === "string") body.scope = a.scope;
+  if (typeof a.type === "string") body.type = a.type;
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  if (API_TOKEN) headers.Authorization = `Bearer ${API_TOKEN}`;
+
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  let resp: Response;
+  try {
+    resp = await fetch(`${DAEMON_URL}/hook/recall`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } catch (err) {
+    clearTimeout(tid);
+    throw new Error(`daemon unreachable at ${DAEMON_URL}: ${(err as Error).message}`);
+  }
+
+  if (!resp.ok || !resp.body) {
+    clearTimeout(tid);
+    throw new Error(`daemon /hook/recall failed: HTTP ${resp.status}`);
+  }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let payload: HookRecallDonePayload | null = null;
+  let errorMsg: string | null = null;
+  const stageTimings: Record<string, number | boolean> = {};
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const evt = parseSseFrame(frame);
+        if (!evt) continue;
+        if (evt.type === "stage") {
+          const d = evt.data as { name?: string; durationMs?: number; meta?: Record<string, unknown> };
+          if (!d.name || !VALID_STAGE_NAMES.has(d.name as RecallStage["name"])) continue;
+          const stage: RecallStage = {
+            name: d.name as RecallStage["name"],
+            startedAtMs: Date.now(),
+            durationMs: d.durationMs,
+            meta: d.meta,
+          };
+          await onStage(stage);
+          if (stage.name === "cache.hit") stageTimings.cache_hit = true;
+          else if (stage.durationMs !== undefined) {
+            stageTimings[`${stage.name.replace(/\./g, "_")}_ms`] = stage.durationMs;
+          }
+        } else if (evt.type === "done") {
+          payload = evt.data as HookRecallDonePayload;
+        } else if (evt.type === "error") {
+          errorMsg = (evt.data as { error?: string })?.error ?? "unknown error";
+        }
+      }
+    }
+  } finally {
+    clearTimeout(tid);
+  }
+
+  if (errorMsg) throw new Error(errorMsg);
+  if (!payload) throw new Error("daemon /hook/recall ended without done event");
+
+  return {
+    query: body.query,
+    vault_size: payload.vault_size,
+    hits: payload.hits,
+    recall_id: payload.recall_id,
+    latency_ms: payload.latency_ms,
+    stages: stageTimings,
+  };
+}
+
+// Feed is namespaced by the CC session (claude ancestor PID) so concurrent
+// sessions don't clobber each other (CC sends no session id — #41836).
+// Computed once at startup; the forwarder lives for the whole session.
+const STATUSLINE_FEED_PATH = sessionFeedPath(claudeSessionPid());
+
+/**
+ * Statusline state — aggregated per Assistant-Turn. Read live by the
+ * @bastra-recall/statusline `bastra` segment which renders it next to the
+ * user's powerline. Claude Code does NOT render MCP notifications/progress
+ * (issue #51713), so this file is the out-of-band channel.
+ *
+ * Ownership: this forwarder process owns the authoritative copy IN MEMORY
+ * (single-threaded JS → concurrent recalls mutate it serially, no race).
+ * The disk file is write-only from here, plus a single read at recall-start
+ * to detect the prompt-hook's idle-reset (turn boundary).
+ */
+interface StatuslineState {
+  ts: number;
+  state: "idle" | "running";
+  vault_size: number;
+  recall_count: number;
+  total_hits: number;
+  total_ms: number;
+  current_stage: string | null;
+  current_stage_started_at: number | null;
+  current_recall_started_at: number | null;
+}
+
+function defaultStatuslineState(): StatuslineState {
+  return {
+    ts: Date.now(),
+    state: "idle",
+    vault_size: 0,
+    recall_count: 0,
+    total_hits: 0,
+    total_ms: 0,
+    current_stage: null,
+    current_stage_started_at: null,
+    current_recall_started_at: null,
+  };
+}
+
+let liveStatusline: StatuslineState = defaultStatuslineState();
+
+/**
+ * At recall start: adopt a fresh turn if the prompt-hook wrote an idle
+ * marker (state === "idle"). This is the only disk READ in the hot path.
+ * Keeps the latest vault_size across the reset.
+ */
+function syncStatuslineTurn(): void {
+  try {
+    const onDisk = JSON.parse(
+      fs.readFileSync(STATUSLINE_FEED_PATH, "utf8"),
+    ) as Partial<StatuslineState>;
+    if (onDisk.state === "idle") {
+      liveStatusline = {
+        ...defaultStatuslineState(),
+        vault_size: onDisk.vault_size ?? liveStatusline.vault_size,
+      };
+    }
+  } catch {
+    // no file / unreadable — keep in-memory state
+  }
+}
+
+let statuslineDirEnsured = false;
+
+/** Flush in-memory state to disk (atomic). Write-only — never reads. */
+function flushStatusline(): void {
+  try {
+    if (!statuslineDirEnsured) {
+      fs.mkdirSync(STATUSLINE_DIR, { recursive: true });
+      statuslineDirEnsured = true;
+    }
+    liveStatusline.ts = Date.now();
+    const tmp = `${STATUSLINE_FEED_PATH}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(liveStatusline), { encoding: "utf8" });
+    fs.renameSync(tmp, STATUSLINE_FEED_PATH);
+  } catch {
+    // Best-effort — never fail the recall over a statusline write.
+  }
+}
+
+function parseSseFrame(frame: string): { type: string; data: unknown } | null {
+  let event = "";
+  let data = "";
+  for (const line of frame.split("\n")) {
+    if (!line || line.startsWith(":")) continue;
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  if (!event || !data) return null;
+  try {
+    return { type: event, data: JSON.parse(data) };
+  } catch {
+    return null;
   }
 }
 

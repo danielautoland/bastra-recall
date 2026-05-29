@@ -15,6 +15,7 @@ Commands:
   update                     brew upgrade (if brew-installed) + re-register +
                              daemon restart. Use this after pulling new code.
   doctor [surface|all]       Check status of one or every surface
+  status                     Check daemon and adapters status (supports --json, -q)
   help                       Show this help
   version                    Show version
 
@@ -26,14 +27,16 @@ Surfaces:
 
 Options:
   --dry-run                  Print what would change; write nothing
-  --yes, -y                  Skip confirmation prompts
   --vault <path>             Vault path (BASTRA_VAULT_PATH env also works)
+  --json                     Output status in JSON format (status command only)
+  -q, --quiet                Suppress output, return exit code only (status command only)
   --help, -h                 Show this help
   --version, -v              Show version
 
 Examples:
   bastra install claude-desktop
   bastra install all --dry-run
+  bastra status --json
   bastra doctor
   bastra uninstall claude-desktop
 
@@ -53,6 +56,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     vaultPath: null,
     showHelp: false,
     showVersion: false,
+    json: false,
+    quiet: false,
     yes: false,
   };
 
@@ -62,6 +67,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     if (a === "--help" || a === "-h") result.showHelp = true;
     else if (a === "--version" || a === "-v") result.showVersion = true;
     else if (a === "--dry-run") result.dryRun = true;
+    else if (a === "--json") result.json = true;
+    else if (a === "-q" || a === "--quiet") result.quiet = true;
     else if (a === "--yes" || a === "-y") result.yes = true;
     else if (a === "--vault") {
       result.vaultPath = argv[++i] ?? null;
@@ -162,3 +169,5 @@ export async function cmdDoctor(args: ParsedArgs): Promise<number> {
   }
   return 0;
 }
+
+export { cmdStatus } from "./status.js";

@@ -1,6 +1,6 @@
 {
   "name": "@bastra-recall/core",
-  "version": "0.1.0",
+  "version": "0.6.0-beta.1",
   "description": "Reusable core library: vault loader, BM25 index, save_memory. Used by the daemon and the Mac-app.",
   "type": "module",
   "private": true,

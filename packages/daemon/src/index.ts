@@ -67,7 +67,7 @@ import { startBackgroundCheck } from "./update-check.js";
 // env-Flag — wenn ein Pro-License-Service kommt, ersetzt der das hier.
 const DOCUMENT_WRITE_ENABLED = envFirst("BASTRA_DOCUMENT_WRITE", "NEXUS_DOCUMENT_WRITE") === "1";
 
-const DAEMON_VERSION = "0.1.0";
+const DAEMON_VERSION = "0.6.0-beta.1";
 const DEFAULT_HTTP_PORT = 6723;
 
 const VAULT_PATH = envFirst("BASTRA_VAULT_PATH", "NEXUS_VAULT_PATH");
@@ -173,7 +173,7 @@ async function main(): Promise<void> {
         });
 
   const server = new Server(
-    { name: "bastra-recall", version: "0.1.0" },
+    { name: "bastra-recall", version: "0.6.0-beta.1" },
     { capabilities: { tools: {} } },
   );
 

@@ -4,7 +4,7 @@ import { request as httpRequest } from "node:http";
 import { FORWARDER_SCRIPT_PATH, CLAUDE_DESKTOP_CONFIG, CLAUDE_CODE_CONFIG } from "./paths.js";
 import type { InstallOpts } from "./types.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.6.0-beta.1";
 export const SERVER_KEY = "bastra-recall";
 const DAEMON_HEALTH_URL = "http://127.0.0.1:6723/health";
 

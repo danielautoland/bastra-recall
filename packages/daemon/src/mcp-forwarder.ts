@@ -185,7 +185,7 @@ async function main(): Promise<void> {
   }
 
   const server = new Server(
-    { name: "bastra-recall-mcp", version: "0.1.0" },
+    { name: "bastra-recall-mcp", version: "0.6.0-beta.1" },
     { capabilities: { tools: {} } },
   );
 

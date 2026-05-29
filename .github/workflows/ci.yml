@@ -1,0 +1,51 @@
+name: CI
+
+# Mechanical build gate — does it compile, do the tests pass, on every
+# supported Node version. This does NOT replace human review: it says
+# nothing about malicious code, dependency tampering, or whether the
+# change makes sense. PRs still get reviewed by a maintainer (CODEOWNERS).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel a previous run on the same ref when a new commit is pushed —
+# saves runner minutes on rapid PR iterations.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: build + test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` installs strictly from package-lock.json and fails hard if
+      # the lockfile is out of sync with package.json — this is what catches
+      # an accidentally-rewritten lockfile in a PR.
+      - name: Install (clean, from lockfile)
+        run: npm ci
+
+      - name: Type-check
+        run: npm run check:types
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test

@@ -41,11 +41,15 @@ jobs:
       - name: Install (clean, from lockfile)
         run: npm ci
 
-      - name: Type-check
-        run: npm run check:types
-
+      # Build first: it compiles each workspace and emits the .d.ts files
+      # (e.g. packages/core/dist) that the other workspaces' type-check
+      # step resolves @bastra-recall/core against. Type-checking before
+      # build would fail on a fresh checkout (core/dist not built yet).
       - name: Build
         run: npm run build
+
+      - name: Type-check
+        run: npm run check:types
 
       - name: Test
         run: npm test

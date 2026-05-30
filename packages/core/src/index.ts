@@ -38,6 +38,8 @@ export {
 } from "./schema.js";
 export type { Memory, MemoryType, Frontmatter } from "./schema.js";
 
+export { truncateSummaryTo, clampSummary, SUMMARY_MAX } from "./summary.js";
+
 export { detectTopics, detectProject, extractContentExcerpt } from "./topics.js";
 export type { ToolIntent, TopicResult } from "./topics.js";
 

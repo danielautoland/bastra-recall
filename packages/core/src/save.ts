@@ -3,6 +3,7 @@ import { join, dirname } from "node:path";
 import { z } from "zod";
 import matter from "gray-matter";
 import { MemoryTypeEnum } from "./schema.js";
+import { clampSummary, SUMMARY_MAX } from "./summary.js";
 
 /**
  * Input contract for save_memory.
@@ -13,7 +14,10 @@ import { MemoryTypeEnum } from "./schema.js";
 export const SaveMemoryInput = z.object({
   title: z.string().min(1),
   type: MemoryTypeEnum,
-  summary: z.string().min(1).max(400),
+  // No `.max` here on purpose: an over-long summary is clamped in
+  // saveMemory() (with a non-fatal note in the result), never rejected —
+  // a too_big error would force the caller into a wasteful retry roundtrip.
+  summary: z.string().min(1),
   body: z.string().min(1),
   topic_path: z.array(z.string().min(1)).min(1),
   tags: z.array(z.string().min(1)).min(1),
@@ -76,6 +80,8 @@ export interface SaveMemoryResult {
   id: string;
   file_path: string;
   created: boolean;
+  /** Present only when the summary was auto-truncated to fit SUMMARY_MAX. */
+  summary_note?: string;
 }
 
 const SLUG_MAX_LEN = 80;
@@ -230,11 +236,15 @@ export async function saveMemory(
     (rel) => rel !== id, // self-link macht keinen Sinn
   );
 
+  // Clamp instead of reject: an over-long summary is truncated at a word
+  // boundary so the write always succeeds; the caller gets a non-fatal note.
+  const { summary: clampedSummary, truncated: summaryTruncated } = clampSummary(input.summary);
+
   const fm: Record<string, unknown> = {
     id,
     title: input.title,
     type: input.type,
-    summary: input.summary,
+    summary: clampedSummary,
     topic_path: input.topic_path,
     tags: input.tags,
     scope: input.scope,
@@ -272,7 +282,18 @@ export async function saveMemory(
 
   await mkdir(dirname(filePath), { recursive: true });
   await writeFile(filePath, content, "utf8");
-  return { id, file_path: filePath, created: !exists };
+  return {
+    id,
+    file_path: filePath,
+    created: !exists,
+    ...(summaryTruncated
+      ? {
+          summary_note:
+            `summary was auto-truncated to ${SUMMARY_MAX} chars; ` +
+            `write it shorter next time (the full text lives in the body, not the summary).`,
+        }
+      : {}),
+  };
 }
 
 export interface DeleteMemoryResult {

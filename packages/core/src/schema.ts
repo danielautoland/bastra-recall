@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { truncateSummaryTo, SUMMARY_MAX } from "./summary.js";
 
 /**
  * YAML 1.1 parses bare `2026-05-01` as a JS Date.
@@ -41,7 +42,11 @@ export const FrontmatterSchema = z.object({
   id: z.string().min(1),
   title: z.string().min(1),
   type: MemoryTypeEnum,
-  summary: z.string().min(1).max(400),
+  // Truncate instead of reject on load: a pre-existing vault file with a
+  // >400-char summary (hand-edited in Obsidian, synced from a cloud drive, or
+  // written by an older version) would otherwise fail parsing and be silently
+  // skipped from the index — silent data loss. Clamp it in-memory instead.
+  summary: z.string().min(1).transform((s) => truncateSummaryTo(s, SUMMARY_MAX)),
   topic_path: z.array(z.string()).min(1),
   tags: z.array(z.string()).min(1),
   scope: z.string().min(1),

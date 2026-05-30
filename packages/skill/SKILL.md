@@ -77,7 +77,7 @@ Always `recall()` with the title/topic first — if a near-duplicate exists, upd
 ### Quality bars (every save)
 
 - **Title** — short, specific, non-generic.
-- **Summary** (≤400 chars) — one sentence with the gist.
+- **Summary** — one sentence with the gist; aim ~250–300 chars, core in the first 160 (the lean-recall snippet). Hard cap 400 — auto-truncated if over, never rejected, so keep it short.
 - **Body** — lead with the rule/fact, then `**Why:**` (root cause / reason / incident) and `**How to apply:**` (when this kicks in). For lessons, capture the failure path **and** the fix.
 - **`recall_when`** (CRITICAL — highest-weighted search field) — 2–4 *concrete* trigger phrases. *"about to write a Tailwind grid"* beats *"CSS questions"*. Without good `recall_when`, the memory is dead weight.
 

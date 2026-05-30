@@ -12,6 +12,7 @@
 import { z } from "zod";
 import {
   saveMemory,
+  truncateSummaryTo,
   SaveMemoryInput,
   stripAutoRelatedSection,
   type Vault,
@@ -159,13 +160,8 @@ const LEAN_SUMMARY_MAX = 160;
 
 /** Kürzt auf max. `LEAN_SUMMARY_MAX` Zeichen an der letzten Wortgrenze und
  *  hängt „…" an. Nie mitten im Wort. Kürzere Summaries bleiben unverändert. */
-export function truncateSummary(summary: string): string {
-  if (summary.length <= LEAN_SUMMARY_MAX) return summary;
-  const slice = summary.slice(0, LEAN_SUMMARY_MAX);
-  const lastSpace = slice.lastIndexOf(" ");
-  const cut = lastSpace > LEAN_SUMMARY_MAX * 0.6 ? slice.slice(0, lastSpace) : slice;
-  return `${cut.trimEnd()}…`;
-}
+export const truncateSummary = (summary: string): string =>
+  truncateSummaryTo(summary, LEAN_SUMMARY_MAX);
 
 /** Schlanke Pro-Hit-Projektion (#50): nur die Felder, die das Modell zum
  *  Validieren braucht. Dropt `matched_terms` (größter variabler Fresser),
@@ -333,6 +329,8 @@ export interface SaveMemoryResult {
   id: string;
   file_path: string;
   created: boolean;
+  /** Present only when saveMemory auto-truncated an over-long summary. */
+  summary_note?: string;
 }
 
 export async function saveMemoryHandler(
@@ -513,7 +511,9 @@ export const MEMORY_TOOL_DEFS: ToolDef[] = [
       "\n" +
       "QUALITY BARS:\n" +
       "- Title: short, specific, non-generic.\n" +
-      "- Summary (<=400 chars): one sentence with the gist.\n" +
+      "- Summary: one sentence, aim ~250-300 chars, core gist in the first " +
+      "  160 (the lean-recall snippet). Hard cap 400 — over-long is " +
+      "  auto-truncated at a word boundary, never rejected; still keep it short.\n" +
       "- Body: lead with the rule/fact, then **Why:** (root cause / " +
       "  reason / incident) and **How to apply:** (when this kicks in). " +
       "  For lessons, capture the failure path AND the fix.\n" +
@@ -553,8 +553,10 @@ export const MEMORY_TOOL_DEFS: ToolDef[] = [
         summary: {
           type: "string",
           description:
-            "One sentence (<=400 chars) capturing the gist — appears in " +
-            "recall() hits.",
+            "One sentence capturing the gist — appears in recall() hits. " +
+            "Aim ~250-300 chars; put the core in the first 160 (shown in lean " +
+            "recall). Over 400 is auto-truncated at a word boundary, never " +
+            "rejected.",
         },
         body: {
           type: "string",

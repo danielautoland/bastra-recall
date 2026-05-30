@@ -19,6 +19,7 @@ import { join, basename, isAbsolute } from "node:path";
 import { z } from "zod";
 import matter from "gray-matter";
 import type { Vault } from "@bastra-recall/core";
+import { truncateSummaryTo, SUMMARY_MAX } from "@bastra-recall/core";
 
 // ─── Argument schemas ───────────────────────────────────────────
 
@@ -47,8 +48,13 @@ export const SaveDocumentArgs = z.object({
   linked_file: z.boolean().default(false),
   /** Optional: extrahierter Plain-Text-Body des Sidecars. */
   body: z.string().optional(),
-  /** Optional: 1-Satz-Summary (≤400 chars). Default = title-based. */
-  summary: z.string().max(400).optional(),
+  /**
+   * Optional: 1-Satz-Summary. Default = title-based.
+   * Kein `.max` hier (analog `save_memory`): eine über-lange Summary wird
+   * beim Build codepoint-sicher an der Wortgrenze geclampt, nie rejected —
+   * ein `too_big`-Error würde den Caller in einen Retry-Roundtrip zwingen.
+   */
+  summary: z.string().optional(),
   /** Optional: zusätzliche Recall-Trigger. Default = title + tags. */
   recall_when: z.array(z.string()).optional(),
   /** Default false: existierender Document-Eintrag wirft Fehler. */
@@ -333,7 +339,7 @@ export async function saveDocument(
   const fm = buildFrontmatter({
     id: docID,
     title: args.title,
-    summary: summary.slice(0, 400),
+    summary: truncateSummaryTo(summary, SUMMARY_MAX),
     tags: args.tags,
     category: args.category,
     recallWhen,

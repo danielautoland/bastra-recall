@@ -34,6 +34,9 @@ logs/
 *.swo
 *~
 
+# Claude Code local state (worktrees, session settings) — never repo content
+.claude/
+
 # macOS
 .DS_Store
 .AppleDouble

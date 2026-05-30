@@ -27,6 +27,7 @@ import { randomUUID } from "node:crypto";
 import { envFirst, envInt } from "./env.js";
 import { defaultLogDir } from "./telemetry.js";
 import { claudeSessionPid, sessionFeedPath, STATUSLINE_DIR } from "./statusline-session.js";
+import { idleStatuslineState } from "./statusline-feed.js";
 
 // Session-namespaced feed — same path the forwarder of THIS session writes
 // (claude ancestor PID, since CC sends no session id — #41836).
@@ -34,10 +35,11 @@ const STATUSLINE_FEED_PATH = sessionFeedPath(claudeSessionPid());
 
 /**
  * Reset the statusline feed to idle at the start of each user turn. MUST be
- * synchronous + instant (no network) — any delay opens a race where the
- * turn's recalls increment counters first and the late reset clobbers them
- * back to zero (under-count). Preserves the previous vault_size; the
- * forwarder refreshes it on the next recall-done.
+ * synchronous + instant (no network). Stamps a fresh `turn_id` (Date.now())
+ * so the forwarder adopts the new turn exactly once — even if this idle marker
+ * lands after the turn's recalls already counted up, the forwarder ignores a
+ * turn_id it has already adopted (Issue #51, see statusline-feed.ts). Preserves
+ * the previous vault_size; the forwarder refreshes it on the next recall-done.
  */
 function resetStatuslineFeed(): void {
   try {
@@ -50,17 +52,7 @@ function resetStatuslineFeed(): void {
     } catch {
       // no prior file — vault_size stays 0 until first recall populates it
     }
-    const state = {
-      ts: Date.now(),
-      state: "idle",
-      vault_size: vaultSize,
-      recall_count: 0,
-      total_hits: 0,
-      total_ms: 0,
-      current_stage: null,
-      current_stage_started_at: null,
-      current_recall_started_at: null,
-    };
+    const state = idleStatuslineState(Date.now(), vaultSize);
     mkdirSync(STATUSLINE_DIR, { recursive: true });
     const tmp = `${STATUSLINE_FEED_PATH}.${process.pid}.tmp`;
     writeFileSync(tmp, JSON.stringify(state), "utf8");
@@ -279,8 +271,9 @@ export function formatHintBlock(hits: RecallHit[], project: string | null, mode:
   if (required.length > 0) {
     sections.push("");
     sections.push(
-      `REQUIRED — load_memory(id) for EACH of these before responding. ` +
-        `Score >=${MUST_LOAD_SCORE} = strong match:`,
+      `Strong matches (score >=${MUST_LOAD_SCORE}) for this prompt — ` +
+        `load_memory(id) the relevant ones before responding ` +
+        `(hints, not obligations; honor an explicit count or scope from the user):`,
     );
     for (const h of required) sections.push(formatHintLine(h));
   }

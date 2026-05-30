@@ -283,14 +283,14 @@ export function formatHintBlock(
     `You just produced a multi-step plan via TodoWrite. ` +
       `Before starting these todos, load the project-facts above to understand ` +
       `the current file layout / past decisions in this area. ` +
-      `Call bastra-recall:load_memory(id) for each REQUIRED hit; treat OPTIONAL hits as candidates.`,
+      `load_memory(id) the hits relevant to these todos; treat the rest as candidates (hints, not obligations).`,
   );
 
   if (required.length > 0) {
     sections.push("");
     sections.push(
-      `REQUIRED — load_memory(id) for EACH of these BEFORE the first todo. ` +
-        `Score >=${MUST_LOAD_SCORE} = strong topology / decision match:`,
+      `Strong topology/decision matches (score >=${MUST_LOAD_SCORE}) — ` +
+        `load_memory(id) the ones relevant to these todos (hints, not obligations):`,
     );
     for (const h of required) sections.push(formatHintLine(h));
   }

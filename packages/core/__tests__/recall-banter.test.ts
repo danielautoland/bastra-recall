@@ -12,7 +12,12 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { pickPhrase, banterModeFromEnv, type RecallStage } from "../src/index.js";
+import {
+  pickPhrase,
+  pickToolPhrase,
+  banterModeFromEnv,
+  type RecallStage,
+} from "../src/index.js";
 
 const STAGES: RecallStage["name"][] = [
   "query.parse",
@@ -102,4 +107,27 @@ test("banterModeFromEnv: parses BASTRA_BANTER", () => {
   assert.equal(banterModeFromEnv({ BASTRA_BANTER: "OFF" }), "off"); // case-insensitive
   assert.equal(banterModeFromEnv({}), "on", "default is on");
   assert.equal(banterModeFromEnv({ BASTRA_BANTER: "junk" }), "on", "unknown values fall back to on");
+});
+
+test("pickToolPhrase: known tool yields a non-empty phrase, off/terse → null", () => {
+  const p = pickToolPhrase("load_memory", "on", "de", 0)!;
+  assert.equal(typeof p, "string");
+  assert.ok(p.length > 0);
+  assert.equal(pickToolPhrase("load_memory", "off", "de", 0), null);
+  assert.equal(pickToolPhrase("load_memory", "terse", "de", 0), null);
+});
+
+test("pickToolPhrase: unknown tool falls back to the default pool", () => {
+  const p = pickToolPhrase("some_unmapped_tool", "on", "en", 1)!;
+  assert.equal(typeof p, "string");
+  assert.ok(p.length > 0);
+});
+
+test("pickToolPhrase: seed cycles through the pool (a series varies)", () => {
+  // Different seeds should be able to surface different phrases — collect a few.
+  const seen = new Set<string>();
+  for (let seed = 0; seed < 8; seed++) {
+    seen.add(pickToolPhrase("load_memory", "on", "de", seed)!);
+  }
+  assert.ok(seen.size > 1, "a series of calls should not all show the same phrase");
 });

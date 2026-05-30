@@ -14,7 +14,7 @@ export type { RecallHit, RecallOptions } from "./search.js";
 export type { RecallStage, StageListener } from "./recall-stages.js";
 export { RECALL_STAGE_ORDER, progressIndexFor } from "./recall-stages.js";
 
-export { pickPhrase, banterModeFromEnv } from "./recall-banter.js";
+export { pickPhrase, pickToolPhrase, banterModeFromEnv } from "./recall-banter.js";
 export type { BanterMode, BanterLang } from "./recall-banter.js";
 
 export {

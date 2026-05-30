@@ -112,17 +112,20 @@ test("formatHintBlock — retrieval mode includes lookup instruction", () => {
   assert.match(block, /<\/recall-hints>/);
 });
 
-test("formatHintBlock — separates REQUIRED vs OPTIONAL by score", () => {
+test("formatHintBlock — separates strong vs OPTIONAL by score", () => {
   const hits: RecallHit[] = [
     { id: "high", title: "H", type: "lesson", scope: "user", summary: "high", score: 150 },
     { id: "mid", title: "M", type: "lesson", scope: "user", summary: "mid", score: 70 },
   ];
   const block = formatHintBlock(hits, null, "retrieval");
-  const requiredIdx = block.indexOf("REQUIRED");
+  const strongIdx = block.indexOf("Strong matches");
   const optionalIdx = block.indexOf("OPTIONAL");
-  assert.ok(requiredIdx >= 0, "REQUIRED section missing");
-  assert.ok(optionalIdx > requiredIdx, "OPTIONAL must come after REQUIRED");
+  assert.ok(strongIdx >= 0, "strong-match section missing");
+  assert.ok(optionalIdx > strongIdx, "OPTIONAL must come after the strong-match section");
   assert.ok(block.indexOf("high") < block.indexOf("mid"));
+  // Hints must read as non-coercive (no "REQUIRED"/"not allowed" wording).
+  assert.ok(!block.includes("REQUIRED"), "must not use coercive REQUIRED wording");
+  assert.ok(!block.includes("not allowed"), "must not use coercive 'not allowed' wording");
 });
 
 // ─── Integration test via mock daemon ────────────────────────────────────

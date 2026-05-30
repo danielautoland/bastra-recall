@@ -280,9 +280,9 @@ function formatHintBlock(required: RecallHit[], optional: RecallHit[], project: 
 
   if (required.length > 0) {
     sections.push(
-      `REQUIRED — call load_memory(id) for EACH of these BEFORE the pending tool call. ` +
-        `Score ≥${MUST_LOAD_SCORE} means the memory is a strong topic match for what you're about to do. ` +
-        `Skipping these is not allowed (per user-preference: agent must not ignore hook hints).`,
+      `Strong matches (score ≥${MUST_LOAD_SCORE}) for what you're about to do — ` +
+        `load_memory(id) the ones that bear on this edit. ` +
+        `Hints, not obligations: load only what fits, don't batch-load the list.`,
     );
     for (const h of required) sections.push(formatHintLine(h));
   }

@@ -27,8 +27,15 @@ export interface BastraInfo {
   totalHits: number;
   totalMs: number;
   currentStage: string | null;
+  /** Human-readable banter phrase for the running stage; preferred over the
+   *  raw stage name when present. Null when banter is off or idle. */
+  currentMessage: string | null;
   currentStageStartedAt: number | null;
   currentRecallStartedAt: number | null;
+  /** Banter phrase shown in the done banner after a recall; hidden once older
+   *  than the TTL (see renderBastra). */
+  lastPhrase: string | null;
+  lastPhraseAt: number | null;
 }
 
 /** Walk parent chain up to the `claude` session process; its PID namespaces
@@ -77,8 +84,12 @@ export class BastraProvider {
         totalMs: numOr(d.total_ms, 0),
         currentStage:
           typeof d.current_stage === "string" ? d.current_stage : null,
+        currentMessage:
+          typeof d.current_message === "string" ? d.current_message : null,
         currentStageStartedAt: numOrNull(d.current_stage_started_at),
         currentRecallStartedAt: numOrNull(d.current_recall_started_at),
+        lastPhrase: typeof d.last_phrase === "string" ? d.last_phrase : null,
+        lastPhraseAt: numOrNull(d.last_phrase_at),
       };
     } catch {
       return null;

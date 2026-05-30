@@ -970,10 +970,26 @@ export class SegmentRenderer {
         info.currentRecallStartedAt !== null
           ? info.totalMs + Math.max(0, Date.now() - info.currentRecallStartedAt)
           : info.totalMs;
-      text = `${icon}bastra · ${info.recallCount} calls · ${info.totalHits} hits · ${live}ms · ${info.currentStage}`;
+      // Prefer the human-readable banter phrase; fall back to the raw stage
+      // name (banter off, or older feed without current_message).
+      const label = info.currentMessage ?? info.currentStage;
+      text = `${icon}bastra · ${info.recallCount} calls · ${info.totalHits} hits · ${live}ms · ${label}`;
     } else {
-      // Between/after recalls in this turn — done snapshot.
-      text = `${icon}✓ bastra · ${info.recallCount} calls · ${info.totalHits} hits · ${info.totalMs}ms`;
+      // Between/after recalls in this turn — done snapshot. The running-state
+      // phrase is too brief (~120ms) for the ≥1s statusline refresh to catch,
+      // so the forwarder persists a done phrase here; show it for a short TTL,
+      // then fall back to the bare banner.
+      const PHRASE_TTL_MS = 10_000;
+      const showPhrase =
+        info.lastPhrase !== null &&
+        info.lastPhraseAt !== null &&
+        Date.now() - info.lastPhraseAt < PHRASE_TTL_MS;
+      const tail = showPhrase ? ` · ${info.lastPhrase}` : "";
+      // hits come from recalls only; ms from any tool call. Show each only
+      // when present, so load_memory-only turns read "N calls · Xms" (no hits).
+      const hits = info.totalHits > 0 ? ` · ${info.totalHits} hits` : "";
+      const ms = info.totalMs > 0 ? ` · ${info.totalMs}ms` : "";
+      text = `${icon}✓ bastra · ${info.recallCount} calls${hits}${ms}${tail}`;
     }
 
     return {

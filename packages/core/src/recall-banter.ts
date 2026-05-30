@@ -192,6 +192,37 @@ const SLOW_STAGE_MS = 500;
 const VERY_SLOW_STAGE_MS = 1000;
 
 /**
+ * Phrasen für die nicht-streamenden MCP-Tools (load_memory, save_memory,
+ * find_document, …). Anders als recall haben sie keine Stages — der Forwarder
+ * feuert pro Aufruf EINE progress-notification mit einer dieser Phrasen, damit
+ * auch beim Memory-Laden etwas Lebendiges unter „Calling bastra-recall" steht.
+ */
+const TOOL_PHRASES: Record<string, PhrasePool> = {
+  load_memory: {
+    de: ["Erinnerung holen …", "Hole die Notiz …", "Krame im Gedächtnis …", "Memory aufschlagen …"],
+    en: ["Fetching the memory …", "Grabbing the note …", "Digging it up …", "Opening the memory …"],
+  },
+  save_memory: {
+    de: ["Merke ich mir …", "Schreibe ins Gedächtnis …", "Notiere das …", "Lege es ab …"],
+    en: ["Committing to memory …", "Writing it down …", "Filing it away …", "Noting that …"],
+  },
+  find_document: {
+    de: ["Im Vault stöbern …", "Dokumente durchsuchen …", "Suche im Archiv …"],
+    en: ["Browsing the vault …", "Searching documents …", "Scanning the archive …"],
+  },
+  read_document: {
+    de: ["Dokument aufschlagen …", "Lese nach …", "Hole den Text …"],
+    en: ["Opening the document …", "Reading it …", "Fetching the text …"],
+  },
+};
+
+/** Fallback für Tools ohne eigenen Pool. */
+const DEFAULT_TOOL_PHRASES: PhrasePool = {
+  de: ["Einen Moment …", "Kurz arbeiten …", "Bin dran …"],
+  en: ["One moment …", "Working on it …", "On it …"],
+};
+
+/**
  * Mode aus `BASTRA_BANTER` env-var. Default `on`. Unbekannte Werte
  * fallen auf `on` zurück — kein Fail-Hard für Typos im RC-File.
  */
@@ -226,6 +257,23 @@ export function pickPhrase(
   const pool = STAGE_PHRASES[stage.name];
   if (!pool) return null;
   return pickFromPool(pool, lang, deterministicSeed(stage));
+}
+
+/**
+ * Liefert eine Phrase für einen nicht-streamenden MCP-Tool-Aufruf
+ * (load_memory, save_memory, …). `null` bei `mode` off/terse. `seed` streut
+ * über aufeinanderfolgende Aufrufe (z.B. ein hochzählender Zähler im
+ * Forwarder), damit eine Serie wechselnde Phrasen zeigt.
+ */
+export function pickToolPhrase(
+  toolName: string,
+  mode: BanterMode,
+  lang: BanterLang,
+  seed: number,
+): string | null {
+  if (mode === "off" || mode === "terse") return null;
+  const pool = TOOL_PHRASES[toolName] ?? DEFAULT_TOOL_PHRASES;
+  return pickFromPool(pool, lang, seed);
 }
 
 /**

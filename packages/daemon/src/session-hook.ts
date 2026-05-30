@@ -209,9 +209,10 @@ function formatBlock(hits: RecallHit[], project: string | null, source: string |
 
   if (required.length > 0) {
     sections.push(
-      `REQUIRED — load each of these via load_memory(id) before responding to the user. ` +
-        `Score ≥${MUST_LOAD_SCORE} means it's a strong match for ${project ?? "this"} session context. ` +
-        `Skipping is not allowed (per user-preference: agent must not ignore hook hints).`,
+      `Strong matches (score ≥${MUST_LOAD_SCORE}) for ${project ?? "this"} session — ` +
+        `load_memory(id) the ones relevant to what the user actually asks for. ` +
+        `These are hints, not obligations: load only what fits, don't batch-load the list, ` +
+        `and if the user requested a specific number or scope, honor that over this list.`,
     );
     for (const h of required) sections.push(formatHintLine(h));
   }

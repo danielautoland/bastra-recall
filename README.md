@@ -176,7 +176,7 @@ For Claude Code, also drop the Skill + hooks by hand:
 
 ```bash
 bash packages/skill/install.sh        # copies SKILL.md → ~/.claude/skills/bastra-recall/
-bash packages/skill/install-hook.sh   # registers PreToolUse + SessionStart hooks in ~/.claude/settings.json
+bash packages/skill/install-hook.sh   # registers all 7 reflex-layer hooks in ~/.claude/settings.json
 ```
 
 `bastra install claude-code` does both of these for you in path B. Re-run `install.sh` whenever `SKILL.md` changes; re-run `install-hook.sh` only if hook binary paths move. To remove the hooks again: `bash packages/skill/install-hook.sh --uninstall`.
@@ -398,7 +398,7 @@ Für Claude Code zusätzlich Skill + Hooks manuell ablegen:
 
 ```bash
 bash packages/skill/install.sh        # kopiert SKILL.md → ~/.claude/skills/bastra-recall/
-bash packages/skill/install-hook.sh   # registriert PreToolUse + SessionStart-Hooks in ~/.claude/settings.json
+bash packages/skill/install-hook.sh   # registriert alle 7 Reflex-Layer-Hooks in ~/.claude/settings.json
 ```
 
 `bastra install claude-code` aus Pfad B erledigt beides für dich. `install.sh` neu ausführen, wenn sich `SKILL.md` ändert; `install-hook.sh` nur, wenn sich Hook-Binärpfade verschieben. Hooks wieder entfernen: `bash packages/skill/install-hook.sh --uninstall`.

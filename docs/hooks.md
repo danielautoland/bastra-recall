@@ -136,11 +136,16 @@ Fires on `Stop`. Reads the last ~30 transcript turns (from
 `payload.transcript_path` or inline `payload.transcript`) and evaluates
 three heuristics:
 
-1. **frustration-density** — ≥ 3 cues (`wieder`, `schon wieder`, `wie oft`,
-   CAPS-words, `fuck`, `verdammt`, `scheisse/scheiße`) in the last 10 user
-   turns → suggests a `lesson` save.
-2. **feature-completion** — `git commit` mention + ≥ 3 distinct file tokens
-   in transcript → suggests a `project-fact` save.
+1. **frustration-density** — ≥ 4 cues AND ≥ 2 explicit frustration words
+   (`wieder`, `schon wieder`, `wie oft`, `fuck`, `verdammt`,
+   `scheisse/scheiße`) in the last 10 user turns. CAPS words count as cues
+   only when ≥ 5 chars or repeated in a turn and not a technical acronym
+   (`SKILL`, `JSON`, `CLAUDE`, …); CAPS alone never triggers → suggests a
+   `lesson` save.
+2. **feature-completion** — `git commit` mentioned in a **user** turn + ≥ 5
+   distinct repo-relative source-file tokens, at least one of which exists
+   under the session cwd → suggests a `project-fact` save. Home/URL paths and
+   non-source files (`.json`, `.yaml`, …) are filtered out.
 3. **architecture-decision** — `ok dann | lass uns | entschieden | final |
    gehen wir mit` in last 5 user turns → suggests a `decision` save.
 

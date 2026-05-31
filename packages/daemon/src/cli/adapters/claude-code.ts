@@ -8,6 +8,7 @@ import {
   BASH_PRE_HOOK_BIN,
   BASH_FAIL_HOOK_BIN,
   STOP_HOOK_BIN,
+  STATUSLINE_BIN,
   SKILL_TARGET_FILE,
 } from "../paths.js";
 import {
@@ -176,6 +177,98 @@ async function patchClaudeCodeHooks(action: "install" | "uninstall", opts: { dry
     : { status: "removed", detail: "bastra-recall hook entries removed", backupPath: backupPath ?? undefined };
 }
 
+// ─── Statusline helpers ──────────────────────────────────────────
+
+// Matches Daniel's hand-configured block + the One-command default:
+//   node <statusline>/dist/index.mjs --style=powerline
+const STATUSLINE_COMMAND = `node ${STATUSLINE_BIN} --style=powerline`;
+
+function buildStatuslineBlock(): Record<string, unknown> {
+  return {
+    type: "command",
+    command: STATUSLINE_COMMAND,
+    refreshInterval: 1,
+    __bastraRecall: true,
+  };
+}
+
+// Recognise our statusLine — by marker (our writes) or by command path
+// (hand-configured ones that predate the marker).
+function isOurStatusline(sl: unknown): boolean {
+  if (typeof sl !== "object" || sl === null) return false;
+  const s = sl as Record<string, unknown>;
+  if (s.__bastraRecall === true || s.__nexusRecall === true) return true;
+  const cmd = typeof s.command === "string" ? s.command : "";
+  return (
+    cmd.includes("bastra-statusline") ||
+    cmd.includes("/statusline/dist/index.mjs") ||
+    cmd.includes("/statusline/bin/claude-powerline") ||
+    (cmd.includes("statusline") && cmd.includes("bastra"))
+  );
+}
+
+function statuslineMatches(sl: unknown): boolean {
+  if (typeof sl !== "object" || sl === null) return false;
+  const s = sl as Record<string, unknown>;
+  return (
+    s.command === STATUSLINE_COMMAND &&
+    s.type === "command" &&
+    s.refreshInterval === 1
+  );
+}
+
+type StatuslineStepStatus =
+  | "installed" | "already-installed" | "would-install" | "foreign-kept"
+  | "removed" | "not-present" | "would-remove" | "error";
+
+async function patchClaudeCodeStatusline(
+  action: "install" | "uninstall",
+  opts: { dryRun: boolean; force: boolean },
+): Promise<{ status: StatuslineStepStatus; detail: string; backupPath?: string }> {
+  if (action === "install" && !(await fileExists(STATUSLINE_BIN))) {
+    return { status: "error", detail: `statusline not built: ${STATUSLINE_BIN} — run 'npm run build'` };
+  }
+
+  const read = await readJsonConfig(CLAUDE_CODE_SETTINGS);
+  if ("error" in read) return { status: "error", detail: read.error };
+  const data = read.data;
+  const existing = data.statusLine;
+  const present = existing !== undefined && existing !== null;
+
+  if (action === "install") {
+    // A different statusLine is configured → never clobber it without --yes.
+    if (present && !isOurStatusline(existing)) {
+      if (!opts.force) {
+        return { status: "foreign-kept", detail: "a different statusLine is configured — kept it (pass --yes to use bastra's)" };
+      }
+    } else if (statuslineMatches(existing)) {
+      return { status: "already-installed", detail: "bastra statusLine already configured" };
+    }
+
+    if (opts.dryRun) {
+      const verb = !present ? "would add" : isOurStatusline(existing) ? "would update" : "would replace foreign";
+      return { status: "would-install", detail: `${verb} statusLine → ${STATUSLINE_COMMAND}` };
+    }
+
+    const backupPath = await backupConfig(CLAUDE_CODE_SETTINGS);
+    data.statusLine = buildStatuslineBlock();
+    await atomicWriteJson(CLAUDE_CODE_SETTINGS, data);
+    const how = !present ? "powerline, refreshInterval 1s" : isOurStatusline(existing) ? "path updated" : "replaced foreign";
+    return { status: "installed", detail: `statusLine registered (${how})`, backupPath: backupPath ?? undefined };
+  }
+
+  // uninstall — only remove our own statusLine, never a foreign one.
+  if (!present || !isOurStatusline(existing)) {
+    return { status: "not-present", detail: present ? "statusLine is not bastra's — kept" : "no statusLine present" };
+  }
+  if (opts.dryRun) return { status: "would-remove", detail: "would remove bastra statusLine" };
+
+  const backupPath = await backupConfig(CLAUDE_CODE_SETTINGS);
+  delete data.statusLine;
+  await atomicWriteJson(CLAUDE_CODE_SETTINGS, data);
+  return { status: "removed", detail: "bastra statusLine removed", backupPath: backupPath ?? undefined };
+}
+
 // ─── Adapter functions ───────────────────────────────────────────
 
 async function claudeCodeInstall(opts: InstallOpts): Promise<InstallResult> {
@@ -193,21 +286,27 @@ async function claudeCodeInstall(opts: InstallOpts): Promise<InstallResult> {
   const mcpMatches = blocksMatch(servers[SERVER_KEY], block);
   const skillResult = await copySkill({ dryRun: opts.dryRun });
   const hookResult = await patchClaudeCodeHooks("install", { dryRun: opts.dryRun });
+  const statuslineResult = await patchClaudeCodeStatusline("install", { dryRun: opts.dryRun, force: opts.force === true });
 
   if (skillResult.status === "error") return { status: "error", message: `skill: ${skillResult.detail}`, configPath };
   if (hookResult.status === "error") return { status: "error", message: `hooks: ${hookResult.detail}`, configPath };
+  if (statuslineResult.status === "error") return { status: "error", message: `statusline: ${statuslineResult.detail}`, configPath };
 
-  // If everything is already in place: no MCP write, no Skill write, no Hook write
+  // If everything is already in place: no MCP write, no Skill write, no Hook write.
+  // A kept foreign statusLine counts as settled (nothing to write) — we just
+  // surface the hint that --yes would switch it to bastra's.
+  const statuslineSettled =
+    statuslineResult.status === "already-installed" || statuslineResult.status === "foreign-kept";
   const allAlreadyInstalled =
     mcpMatches &&
     skillResult.status === "already-installed" &&
-    hookResult.status === "already-installed";
+    hookResult.status === "already-installed" &&
+    statuslineSettled;
   if (allAlreadyInstalled) {
-    return {
-      status: "already-installed",
-      message: "MCP server, skill, and hooks all already in place",
-      configPath,
-    };
+    const msg = statuslineResult.status === "foreign-kept"
+      ? "MCP, skill, hooks in place; statusLine: foreign one kept (pass --yes to use bastra's)"
+      : "MCP server, skill, hooks, and statusLine all already in place";
+    return { status: "already-installed", message: msg, configPath };
   }
 
   if (opts.dryRun) {
@@ -216,6 +315,7 @@ async function claudeCodeInstall(opts: InstallOpts): Promise<InstallResult> {
     else steps.push("mcp: already matches");
     steps.push(`skill: ${skillResult.detail}`);
     steps.push(`hooks: ${hookResult.detail}`);
+    steps.push(`statusline: ${statuslineResult.detail}`);
     return { status: "would-install", message: steps.join("\n  · "), configPath };
   }
 
@@ -231,13 +331,14 @@ async function claudeCodeInstall(opts: InstallOpts): Promise<InstallResult> {
   lines.push(mcpMatches ? "mcp: already matches" : `mcp: registered '${SERVER_KEY}'`);
   lines.push(`skill: ${skillResult.detail}`);
   lines.push(`hooks: ${hookResult.detail}`);
+  lines.push(`statusline: ${statuslineResult.detail}`);
   lines.push("restart Claude Code to activate");
 
   return {
     status: "installed",
     message: lines.join("\n  · "),
     configPath,
-    backupPath,
+    backupPath: backupPath ?? statuslineResult.backupPath,
   };
 }
 
@@ -255,8 +356,9 @@ async function claudeCodeUninstall(opts: { dryRun: boolean }): Promise<Uninstall
   // the skill, run a separate `bastra uninstall --purge-skill` or remove
   // the file manually.
   const hookResult = await patchClaudeCodeHooks("uninstall", { dryRun: opts.dryRun });
+  const statuslineResult = await patchClaudeCodeStatusline("uninstall", { dryRun: opts.dryRun, force: false });
 
-  if (!mcpPresent && hookResult.status === "not-present") {
+  if (!mcpPresent && hookResult.status === "not-present" && statuslineResult.status === "not-present") {
     return { status: "not-present", message: "nothing to remove (skill kept in case Claude Desktop still uses it)", configPath };
   }
 
@@ -264,6 +366,7 @@ async function claudeCodeUninstall(opts: { dryRun: boolean }): Promise<Uninstall
     const steps: string[] = [];
     steps.push(mcpPresent ? `mcp: would remove '${SERVER_KEY}'` : "mcp: not present");
     steps.push(`hooks: ${hookResult.detail}`);
+    steps.push(`statusline: ${statuslineResult.detail}`);
     steps.push("skill: kept (shared with Claude Desktop)");
     return { status: "would-remove", message: steps.join("\n  · "), configPath };
   }
@@ -280,6 +383,7 @@ async function claudeCodeUninstall(opts: { dryRun: boolean }): Promise<Uninstall
   const lines: string[] = [];
   lines.push(mcpPresent ? `mcp: removed '${SERVER_KEY}'` : "mcp: not present");
   lines.push(`hooks: ${hookResult.detail}`);
+  lines.push(`statusline: ${statuslineResult.detail}`);
   lines.push("skill: kept (shared with Claude Desktop)");
   lines.push("restart Claude Code to drop the connection");
 
@@ -287,7 +391,7 @@ async function claudeCodeUninstall(opts: { dryRun: boolean }): Promise<Uninstall
     status: "removed",
     message: lines.join("\n  · "),
     configPath,
-    backupPath,
+    backupPath: backupPath ?? statuslineResult.backupPath,
   };
 }
 
@@ -336,6 +440,14 @@ async function claudeCodeDoctor(): Promise<DoctorResult> {
     details["hooks"] = hooksMissing
       ? `${found.size}/${OUR_HOOK_FILES.length} registered (missing: ${missing.join(", ")})`
       : `${OUR_HOOK_FILES.length}/${OUR_HOOK_FILES.length} registered`;
+
+    // Statusline (optional/cosmetic — never marks the surface as broken).
+    const sl = settingsRead.data.statusLine;
+    details["statusline"] = sl === undefined || sl === null
+      ? "missing (run 'bastra install' to add it)"
+      : isOurStatusline(sl)
+        ? "present (bastra)"
+        : "present (foreign — run 'bastra install --yes' to replace it)";
   }
 
   // Daemon

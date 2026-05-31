@@ -135,7 +135,7 @@ Adapter status:
 | Surface | What gets installed | Status |
 |---|---|---|
 | `claude-desktop` | MCP server entry in `claude_desktop_config.json` | ✅ implemented |
-| `claude-code` | MCP server in `.claude.json` + Skill in `.claude/skills/` + PreToolUse & SessionStart hooks in `.claude/settings.json` | ✅ implemented |
+| `claude-code` | MCP server in `.claude.json` + Skill in `.claude/skills/` + hooks & powerline statusLine in `.claude/settings.json` | ✅ implemented |
 | `cursor` | MCP server entry in `.cursor/mcp.json` | ✅ implemented (Cursor Rules layer is a separate roadmap item) |
 
 Every write is **idempotent** (re-runs are no-ops), **atomic** (tmp file + rename), **backed up** (timestamped `.bak-…` next to the original), and **parse-safe** (broken JSON aborts the run instead of corrupting it). Vault path resolves in this order: `--vault <path>` flag → `BASTRA_VAULT_PATH` env → auto-detect from an existing registration in `~/.claude.json` or `claude_desktop_config.json`. The CLI bails with a clear message if none of those produce a path.
@@ -230,6 +230,8 @@ A native macOS app is being built on top of bastra-recall — same vault, same d
 MIT — see [LICENSE](./LICENSE).
 
 Public docs and code on this branch are published under the open license; private notes (in `private/`, gitignored) are not.
+
+The statusline (`packages/statusline/`) bundles [owloops/claude-powerline](https://github.com/owloops/claude-powerline) (MIT, © 2025 Owloops) as its rendering engine, with the bastra-status segment built in; the upstream license is retained in [`packages/statusline/LICENSE`](./packages/statusline/LICENSE).
 
 ### Status & contact
 
@@ -357,7 +359,7 @@ Adapter-Status:
 | Surface | Was installiert wird | Status |
 |---|---|---|
 | `claude-desktop` | MCP-Server-Eintrag in `claude_desktop_config.json` | ✅ implementiert |
-| `claude-code` | MCP-Server in `.claude.json` + Skill in `.claude/skills/` + PreToolUse- & SessionStart-Hooks in `.claude/settings.json` | ✅ implementiert |
+| `claude-code` | MCP-Server in `.claude.json` + Skill in `.claude/skills/` + Hooks & Powerline-statusLine in `.claude/settings.json` | ✅ implementiert |
 | `cursor` | MCP-Server-Eintrag in `.cursor/mcp.json` | ✅ implementiert (Cursor-Rules-Layer separater Roadmap-Punkt) |
 
 Jeder Write ist **idempotent** (Re-Runs sind No-Ops), **atomar** (Tmp-File + Rename), **gesichert** (timestamped `.bak-…` neben dem Original) und **parse-safe** (kaputtes JSON bricht den Lauf ab statt es zu zerstören). Vault-Pfad-Auflösung in dieser Reihenfolge: `--vault <pfad>`-Flag → `BASTRA_VAULT_PATH`-ENV → Auto-Detect aus bestehender Registrierung in `~/.claude.json` oder `claude_desktop_config.json`. Wenn nichts greift, bricht die CLI mit klarer Meldung ab.
@@ -452,6 +454,8 @@ Eine native macOS-App entsteht auf Basis von bastra-recall — selber Vault, sel
 MIT — siehe [LICENSE](./LICENSE).
 
 Public Docs und Code auf diesem Branch laufen unter der Open License; private Notizen (in `private/`, gitignored) nicht.
+
+Die Statusline (`packages/statusline/`) nutzt [owloops/claude-powerline](https://github.com/owloops/claude-powerline) (MIT, © 2025 Owloops) als Rendering-Engine, mit eingebautem bastra-status-Segment; die Upstream-Lizenz liegt unverändert in [`packages/statusline/LICENSE`](./packages/statusline/LICENSE).
 
 ### Status & Kontakt
 

@@ -1,6 +1,8 @@
 export interface InstallOpts {
   dryRun: boolean;
   vaultPath: string | null;
+  // --yes: replace a foreign statusLine instead of keeping it.
+  force?: boolean;
 }
 
 export interface InstallResult {

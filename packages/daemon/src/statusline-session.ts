@@ -12,10 +12,46 @@
  * Feed layout: ~/.bastra/statusline/<claude-session-pid>.json
  */
 import { execFileSync } from "node:child_process";
+import { readdirSync, unlinkSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
 export const STATUSLINE_DIR = path.join(os.homedir(), ".bastra", "statusline");
+
+/** Existence check via signal 0. EPERM = alive but not ours; ESRCH = gone. */
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Delete feed files whose owning CC session PID is no longer alive. Runs at
+ * forwarder startup so feeds orphaned by a hard kill (CC dies without sending
+ * SIGTERM) don't pile up in ~/.bastra/statusline/. Our own session PID is the
+ * live CC parent, so it is never reaped.
+ */
+export function reapStaleFeeds(): void {
+  let entries: string[];
+  try {
+    entries = readdirSync(STATUSLINE_DIR);
+  } catch {
+    return; // dir not created yet — nothing to reap
+  }
+  for (const name of entries) {
+    const m = name.match(/^(\d+)\.json$/);
+    if (!m) continue;
+    if (pidAlive(parseInt(m[1], 10))) continue;
+    try {
+      unlinkSync(path.join(STATUSLINE_DIR, name));
+    } catch {
+      /* already gone / racing forwarder — ignore */
+    }
+  }
+}
 
 /**
  * Walk the parent-process chain (starting from our parent) up to the

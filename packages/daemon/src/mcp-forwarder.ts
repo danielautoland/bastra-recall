@@ -57,7 +57,7 @@ import {
 import { MEMORY_TOOL_DEFS } from "./tool-handlers.js";
 import { documentTools } from "./documents-handler.js";
 import { documentWriteTools } from "./documents-write-handler.js";
-import { claudeSessionPid, sessionFeedPath, STATUSLINE_DIR } from "./statusline-session.js";
+import { claudeSessionPid, sessionFeedPath, STATUSLINE_DIR, reapStaleFeeds } from "./statusline-session.js";
 import {
   adoptTurn,
   defaultStatuslineState,
@@ -368,20 +368,40 @@ async function main(): Promise<void> {
     }
   });
 
+  // Clean up feed files left behind by CC sessions that died without a clean
+  // shutdown (hard kill / crash) — runs once at startup.
+  reapStaleFeeds();
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
     `[bastra-recall-mcp] forwarder ready (daemon=${DAEMON_URL}, spawn=${SPAWN_ENABLED ? "on" : "off"})`,
   );
 
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
     // Forwarder beendet sich, aber lässt den Daemon laufen — andere
-    // Sessions können noch verbunden sein.
+    // Sessions können noch verbunden sein. Guard gegen Mehrfach-Trigger
+    // (SIGTERM + stdin-end + ppid-Poll können gleichzeitig feuern).
+    if (shuttingDown) return;
+    shuttingDown = true;
     await server.close();
     process.exit(0);
   };
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
+
+  // Fast path: CC closes our stdin when it exits → shut down immediately.
+  process.stdin.on("end", () => void shutdown());
+  process.stdin.on("close", () => void shutdown());
+
+  // Backstop: if CC dies without closing stdin (hard kill), we get reparented
+  // to init/launchd → ppid becomes 1. Poll for it so we never linger as a
+  // zombie. unref() so the timer itself never keeps the process alive.
+  const orphanCheck = setInterval(() => {
+    if (process.ppid === 1) void shutdown();
+  }, 30_000);
+  orphanCheck.unref();
 }
 
 // ─── helpers ─────────────────────────────────────────────────────

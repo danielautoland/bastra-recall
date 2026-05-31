@@ -16,6 +16,10 @@ export const BASH_PRE_HOOK_BIN = resolve(DAEMON_DIST, "bash-pre-hook.js");
 export const BASH_FAIL_HOOK_BIN = resolve(DAEMON_DIST, "bash-fail-hook.js");
 export const STOP_HOOK_BIN = resolve(DAEMON_DIST, "stop-hook.js");
 
+// Statusline lives in the sibling package; entry is the bundled ESM module
+// (the bin/ wrapper just imports it). Invoked as `node <this> --style=powerline`.
+export const STATUSLINE_BIN = resolve(PACKAGE_ROOT, "..", "statusline", "dist", "index.mjs");
+
 export const SKILL_SOURCE_PATH = resolve(PACKAGE_ROOT, "..", "skill", "SKILL.md");
 export const SKILL_TARGET_DIR = resolve(homedir(), ".claude/skills/bastra-recall");
 export const SKILL_TARGET_FILE = resolve(SKILL_TARGET_DIR, "SKILL.md");

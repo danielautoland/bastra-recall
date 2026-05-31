@@ -26,7 +26,7 @@ Surfaces:
 
 Options:
   --dry-run                  Print what would change; write nothing
-  --yes, -y                  Skip confirmation prompts
+  --yes, -y                  Skip confirmation prompts (replace a foreign statusLine)
   --vault <path>             Vault path (BASTRA_VAULT_PATH env also works)
   --help, -h                 Show this help
   --version, -v              Show version
@@ -91,7 +91,7 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
   }
 
   const vaultPath = resolveVaultPath(args.vaultPath);
-  const opts: InstallOpts = { dryRun: args.dryRun, vaultPath };
+  const opts: InstallOpts = { dryRun: args.dryRun, vaultPath, force: args.yes };
 
   let hadError = false;
   for (const adapter of targets) {

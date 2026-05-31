@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/logo.png" alt="Bastra logo" width="120" />
+  <img src="./assets/github-banner.png" alt="Bastra — the open memory layer for AI assistants and agents" width="100%" />
 </p>
 
 # Bastra.Recall
@@ -21,7 +21,7 @@
 
 **What it is** — A long-term memory for any AI assistant or agent: Claude (Code, Desktop, Web), ChatGPT (via Custom GPT Actions), Cursor, and anything else that speaks MCP or HTTP. Whenever you correct it, state a rule, or commit to a decision, it gets saved as a small note. In your next chat — days or weeks later, in any tool — the AI pulls those notes back automatically. No more repeating yourself. Everything stays on your own Mac as plain Markdown files (Obsidian-compatible). All your AI tools share the same memory at the same time.
 
-**Status** — 🟢 Early alpha. M0 (eval) and M1 (read path) done, M2 (save path) functional, M3 reflex layer functional with two of four hooks live: `PreToolUse` (recall before each Write/Edit) and `SessionStart` (preload top memories at session open). Distribution and multi-surface are next. See [PLAN.md](./PLAN.md).
+**Status** — 🟢 Early beta. M0 (eval) and M1 (read path) done, M2 (save path) functional, and the Claude Code reflex layer ships with hooks for `SessionStart`, `UserPromptSubmit`, `PreToolUse` file edits / todos / bash safety, `PostToolUse` bash failures, plus optional `Stop` save-eval. Distribution and multi-surface hardening are active. See [PLAN.md](./PLAN.md).
 
 ### Why
 
@@ -67,12 +67,18 @@ One daemon ↔ many AI clients
   - All clients share the same vault, index, telemetry stream
 ```
 
-Two reflex hooks ship with the daemon, both speaking to its loopback HTTP endpoint:
+The Claude Code reflex layer ships with six quiet hooks by default, all
+speaking to the daemon's loopback HTTP endpoint:
 
 - **`PreToolUse`** (`bastra-recall-hook`) — fires before every `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. Topic-detects from the tool intent and injects `<recall-hints>` as `additionalContext`.
 - **`SessionStart`** (`bastra-recall-session-hook`) — fires on `startup`/`resume`/`clear`/`compact`. Preloads top user-prefs + cross-project rules + project-scoped memories as `<session-context>` so the AI knows who, what, and what-not from the first prompt.
+- **`UserPromptSubmit`**, **`TodoWrite`**, **Bash safety**, and **Bash failure** hooks cover lookup prompts, topology recall before plans, destructive-command safety, and command-failure lesson recall.
 
-`UserPromptSubmit` and `Stop` hooks remain queued for v0.5 once dogfood reveals where they'd close gaps. Telemetry (`scripts/stats.ts`) tracks per-hook latency, hint-quality, and follow-through (did the AI actually `load_memory` after a hint).
+The **`Stop`** save-eval hook exists but is opt-in because it can emit
+multi-line suggestions at turn end. Enable it explicitly with
+`bastra install claude-code --with-stop-hook` if you want that behavior.
+Telemetry (`scripts/stats.ts`) tracks per-hook latency, hint-quality, and
+follow-through (did the AI actually `load_memory` after a hint).
 
 Details: [docs/architecture.md](./docs/architecture.md), [docs/memory-schema.md](./docs/memory-schema.md), [docs/triggers.md](./docs/triggers.md).
 
@@ -113,7 +119,7 @@ Three paths, in order of friction. bastra-recall is self-contained: the daemon, 
 
 The script installs Homebrew if it's missing, adds the bastra tap, installs `bastra-recall`, and runs `bastra install all` — no terminal knowledge required.
 
-> **Status (today):** `distribution/Install Bastra.command` is ready in this repo. The Homebrew tap (`n0mad-ai/homebrew-tap`) it relies on is published as soon as [#3](https://github.com/n0mad-ai/bastra-recall/issues/3) closes. Until then, use path B.
+> If the `.command` asset is not attached to the latest release yet, use path B.
 
 #### B) One command — for developers
 
@@ -121,13 +127,14 @@ Pre-requisites: Node 20+, Git.
 
 ```bash
 git clone https://github.com/n0mad-ai/bastra-recall.git
-cd bastra-recall/packages/daemon
+cd bastra-recall
 npm install
 npm run build
 
-node dist/cli.js install all       # registers with every supported AI client
-node dist/cli.js doctor            # check status everywhere
-node dist/cli.js uninstall all     # reverse everything
+node packages/daemon/dist/cli.js install all --vault /abs/path/to/your/vault
+node packages/daemon/dist/cli.js doctor
+node packages/daemon/dist/cli.js doctor --fix   # repair stale/missing registrations
+node packages/daemon/dist/cli.js uninstall all
 ```
 
 Adapter status:
@@ -140,7 +147,7 @@ Adapter status:
 
 Every write is **idempotent** (re-runs are no-ops), **atomic** (tmp file + rename), **backed up** (timestamped `.bak-…` next to the original), and **parse-safe** (broken JSON aborts the run instead of corrupting it). Vault path resolves in this order: `--vault <path>` flag → `BASTRA_VAULT_PATH` env → auto-detect from an existing registration in `~/.claude.json` or `claude_desktop_config.json`. The CLI bails with a clear message if none of those produce a path.
 
-Once the brew tap is live, this collapses to `bastra install all`.
+Once installed through Homebrew or npm, this collapses to `bastra install all`.
 
 #### C) Fully manual — fallback
 
@@ -176,7 +183,7 @@ For Claude Code, also drop the Skill + hooks by hand:
 
 ```bash
 bash packages/skill/install.sh        # copies SKILL.md → ~/.claude/skills/bastra-recall/
-bash packages/skill/install-hook.sh   # registers all 7 reflex-layer hooks in ~/.claude/settings.json
+bash packages/skill/install-hook.sh   # registers the 6 default reflex-layer hooks (add --with-stop-hook for the 7th, Stop save-eval)
 ```
 
 `bastra install claude-code` does both of these for you in path B. Re-run `install.sh` whenever `SKILL.md` changes; re-run `install-hook.sh` only if hook binary paths move. To remove the hooks again: `bash packages/skill/install-hook.sh --uninstall`.
@@ -201,7 +208,7 @@ Auth and CORS:
 - Loopback callers (`127.0.0.1`) bypass auth by default. Set `BASTRA_AUTH_LOOPBACK_SKIP=0` to require the token even locally.
 - CORS is permissive by default (`Access-Control-Allow-Origin: *`). Restrict via `BASTRA_CORS_ORIGIN=https://your.host`.
 
-To expose this API to a hosted client like ChatGPT, point a tunnel (Cloudflare Tunnel / ngrok / your own reverse proxy) at `127.0.0.1:6723` and configure the Custom GPT with the tunnel URL + your token. An OpenAPI 3.0 spec is tracked as a roadmap issue.
+To expose this API to a hosted client like ChatGPT, point a tunnel (Cloudflare Tunnel / ngrok / your own reverse proxy) at `127.0.0.1:6723` and configure the Custom GPT with the tunnel URL + your token. An OpenAPI 3.0 starter spec lives in [docs/openapi.yaml](./docs/openapi.yaml).
 
 ### Roadmap
 
@@ -213,8 +220,8 @@ Milestone-based, not phase-based. Each gate is a hard pass/fail.
 | **M1** | Daemon + read path (`recall`, `load_memory`) | ✅ **Done** — MCP server live, watcher works on cloud-storage mounts. |
 | **M2** | Save path + autonomous-save triggers | 🟡 **Functional** — `save_memory` MCP tool live with force-reindex. Trigger discipline shipped as a Skill. False-save / missed-save metrics not yet collected. |
 | **M0.5** | Stress-test recall (paraphrased / cross-memory / anti-hallucination) | ⏳ Open — see issues. |
-| **M3** | Reflex layer: hooks for `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Functional (PreToolUse + SessionStart, 2 of 4)** — both live in production: `PreToolUse` injects `<recall-hints>` before every Write/Edit (2547 invocations over 22 days, 91.5% REQUIRED-band hits), `SessionStart` injects `<session-context>` at every new chat. `UserPromptSubmit` and `Stop` queued. |
-| **Distribution** | Homebrew tap, `bastra` CLI, `Install Bastra.command`, npm package | 🟡 **Functional** — `bastra` CLI ships with adapters for every surface; Homebrew tap [n0mad-ai/homebrew-tap](https://github.com/n0mad-ai/homebrew-tap) published with a head-only formula; `distribution/Install Bastra.command` is the doubleclick wrapper. Open: end-to-end brew test, npm publish, GitHub release with the `.command` as an asset (#3). |
+| **M3** | Reflex layer: hooks for `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `PostToolUse` plus opt-in `Stop` | 🟡 **Functional** — six quiet Claude Code hooks are installed by default; `Stop` save-eval is available behind `--with-stop-hook`. |
+| **Distribution** | Homebrew tap, `bastra` CLI, `Install Bastra.command`, npm package | 🟡 **Functional / hardening** — `bastra` CLI ships with adapters for every surface; Homebrew formula and double-click installer exist; npm publish workflow and public smoke fixtures are being hardened. |
 | **Multi-surface** | One install per AI client (MCP + Skill + Hooks where applicable) + REST gateway for non-MCP clients | 🟡 **Functional** — `bastra install` covers Claude Code (MCP + Skill + Hooks), Claude Desktop (MCP + Skill), Cursor (MCP). REST `/api/v1/*` enables ChatGPT Custom GPT Actions over HTTPS + tunnel. Open: OpenAPI 3.0 spec, Claude.ai web Custom Connector registration (#7). |
 
 Out of v0: **multi-device sync**. See [PLAN.md](./PLAN.md). (Codebase indexing has been pulled into v0 — see the M4 milestone.)
@@ -235,7 +242,7 @@ The statusline (`packages/statusline/`) bundles [owloops/claude-powerline](https
 
 ### Status & contact
 
-Pre-alpha. See [PLAN.md](./PLAN.md). Issues and discussions welcome — early feedback shapes the design.
+Early beta. See [PLAN.md](./PLAN.md). Issues and discussions welcome — early feedback shapes the design. Please report security issues privately via [SECURITY.md](./SECURITY.md).
 
 Built by [@n0mad-ai](https://github.com/n0mad-ai).
 
@@ -291,12 +298,18 @@ Ein Daemon ↔ viele AI-Clients
   - Alle Clients teilen denselben Vault, Index und Telemetry-Stream
 ```
 
-Zwei Reflex-Hooks liegen dem Daemon bei, beide sprechen seinen lokalen HTTP-Endpoint an:
+Der Claude-Code-Reflex-Layer installiert standardmäßig sechs ruhige Hooks, die
+den lokalen HTTP-Endpoint des Daemons nutzen:
 
 - **`PreToolUse`** (`bastra-recall-hook`) — feuert vor jedem `Write`/`Edit`/`MultiEdit`/`NotebookEdit`. Erkennt das Thema aus dem Tool-Aufruf und injiziert `<recall-hints>` als `additionalContext`.
 - **`SessionStart`** (`bastra-recall-session-hook`) — feuert bei `startup`/`resume`/`clear`/`compact`. Lädt Top-User-Präferenzen + projektübergreifende Regeln + projekt-spezifische Memories als `<session-context>` vor, damit die AI ab dem ersten Prompt weiß: wer, was, und was-nicht.
+- **`UserPromptSubmit`**, **`TodoWrite`**, Bash-Safety und Bash-Failure decken Lookup-Prompts, Topology-Recall vor Plänen, riskante Shell-Befehle und fehlgeschlagene Commands ab.
 
-`UserPromptSubmit`- und `Stop`-Hooks bleiben in Warteschlange für v0.5 — sobald der Dogfood-Einsatz zeigt, wo sie Lücken schließen würden. Die Telemetrie (`scripts/stats.ts`) misst pro Hook Latenz, Hint-Qualität und Follow-Through (hat die AI nach einem Hint wirklich `load_memory` gemacht).
+Der **`Stop`** Save-Eval-Hook existiert, ist aber opt-in, weil er am Turn-Ende
+mehrzeilige Vorschläge ausgeben kann. Aktivierung bewusst per
+`bastra install claude-code --with-stop-hook`. Die Telemetrie (`scripts/stats.ts`)
+misst pro Hook Latenz, Hint-Qualität und Follow-Through (hat die AI nach einem
+Hint wirklich `load_memory` gemacht).
 
 Details: [docs/architecture.md](./docs/architecture.md), [docs/memory-schema.md](./docs/memory-schema.md), [docs/triggers.md](./docs/triggers.md).
 
@@ -400,7 +413,7 @@ Für Claude Code zusätzlich Skill + Hooks manuell ablegen:
 
 ```bash
 bash packages/skill/install.sh        # kopiert SKILL.md → ~/.claude/skills/bastra-recall/
-bash packages/skill/install-hook.sh   # registriert alle 7 Reflex-Layer-Hooks in ~/.claude/settings.json
+bash packages/skill/install-hook.sh   # registriert die 6 Standard-Reflex-Layer-Hooks (--with-stop-hook für den 7., Stop-Save-Eval)
 ```
 
 `bastra install claude-code` aus Pfad B erledigt beides für dich. `install.sh` neu ausführen, wenn sich `SKILL.md` ändert; `install-hook.sh` nur, wenn sich Hook-Binärpfade verschieben. Hooks wieder entfernen: `bash packages/skill/install-hook.sh --uninstall`.
@@ -437,7 +450,7 @@ Milestone-basiert, nicht Phasen-basiert. Jedes Gate ist hartes Pass/Fail.
 | **M1** | Daemon + Read-Path (`recall`, `load_memory`) | ✅ **Fertig** — MCP-Server live, Watcher funktioniert auf Cloud-Storage-Mounts. |
 | **M2** | Save-Path + autonome Save-Trigger | 🟡 **Funktional** — `save_memory` MCP-Tool live mit Force-Reindex. Trigger-Disziplin als Skill ausgeliefert. False-Save- / Missed-Save-Metriken noch nicht erhoben. |
 | **M0.5** | Stresstest für Recall (paraphrasiert / cross-memory / anti-halluzination) | ⏳ Offen — siehe Issues. |
-| **M3** | Reflex-Layer: Hooks für `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `Stop` | 🟡 **Funktional (PreToolUse + SessionStart, 2 von 4)** — beide produktiv live: `PreToolUse` injiziert `<recall-hints>` vor jedem Write/Edit (2547 Aufrufe in 22 Tagen, 91,5% REQUIRED-Hits), `SessionStart` injiziert `<session-context>` bei jedem neuen Chat. `UserPromptSubmit` und `Stop` warten. |
+| **M3** | Reflex-Layer: Hooks für `SessionStart` / `UserPromptSubmit` / `PreToolUse` / `PostToolUse` plus opt-in `Stop` | 🟡 **Funktional** — sechs ruhige Claude-Code-Hooks werden standardmäßig installiert; `Stop` Save-Eval ist bewusst hinter `--with-stop-hook`. |
 | **Distribution** | Homebrew-Tap, `bastra`-CLI, `Install Bastra.command`, npm-Package | 🟡 **Funktional** — `bastra`-CLI mit Adaptern für jedes Surface; Homebrew-Tap [n0mad-ai/homebrew-tap](https://github.com/n0mad-ai/homebrew-tap) mit Head-only-Formula veröffentlicht; `distribution/Install Bastra.command` als Doppelklick-Wrapper. Offen: End-to-End-Brew-Test, npm publish, GitHub-Release mit der `.command`-Datei als Asset (#3). |
 | **Multi-Surface** | Ein Install pro AI-Client (MCP + Skill + Hooks wo zutreffend) + REST-Gateway für Nicht-MCP-Clients | 🟡 **Funktional** — `bastra install` deckt Claude Code (MCP + Skill + Hooks), Claude Desktop (MCP + Skill), Cursor (MCP) ab. REST `/api/v1/*` ermöglicht ChatGPT Custom GPT Actions via HTTPS + Tunnel. Offen: OpenAPI 3.0-Spec, Claude.ai Web Custom Connector Registrierung (#7). |
 

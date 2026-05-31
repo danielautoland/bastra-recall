@@ -11,6 +11,7 @@
 set -euo pipefail
 
 # Make double-click logs readable even when launched from Finder
+mkdir -p "$HOME/Library/Logs"
 exec > >(tee -a "$HOME/Library/Logs/bastra-install.log") 2>&1
 echo
 echo "════════════════════════════════════════════════════════════"
@@ -40,7 +41,14 @@ fi
 # 3. Install / upgrade
 if brew list bastra-recall >/dev/null 2>&1; then
   echo "→ bastra-recall already installed — checking for updates…"
-  brew upgrade bastra-recall || true
+  # Non-fatal under `set -e`: a transient upgrade failure (network/tap) must not
+  # abort before the friendly error block below — registration can still proceed
+  # on the already-installed version.
+  upgrade_rc=0
+  brew upgrade bastra-recall || upgrade_rc=$?
+  if [ "$upgrade_rc" -ne 0 ]; then
+    echo "  ⚠ upgrade failed (rc=$upgrade_rc) — continuing with the installed version."
+  fi
 else
   echo "→ Installing bastra-recall…"
   brew install n0mad-ai/tap/bastra-recall
@@ -49,12 +57,30 @@ fi
 # 4. Register with every supported AI client
 echo
 echo "→ Registering bastra-recall with Claude Code, Claude Desktop, Cursor…"
-bastra install all || true
+install_rc=0
+bastra install all || install_rc=$?
 
 # 5. Show status
 echo
 echo "→ Final status:"
-bastra doctor || true
+doctor_rc=0
+bastra doctor || doctor_rc=$?
+
+if [ "$install_rc" -ne 0 ] || [ "$doctor_rc" -ne 0 ]; then
+  echo
+  echo "════════════════════════════════════════════════════════════"
+  echo "  Install finished with errors."
+  echo
+  echo "  Log: ~/Library/Logs/bastra-install.log"
+  echo "  Run this after fixing the issue:"
+  echo "    bastra install all"
+  echo "    bastra doctor"
+  echo "════════════════════════════════════════════════════════════"
+  echo
+  echo "(This window will stay open. Press any key to close.)"
+  read -r -n 1 -s
+  exit 1
+fi
 
 echo
 echo "════════════════════════════════════════════════════════════"

@@ -15,6 +15,7 @@ out/
 
 # Daemon dev artifacts
 packages/daemon/test-vault/
+packages/daemon/skill/
 
 # Environment
 .env

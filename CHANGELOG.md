@@ -4,6 +4,23 @@ All notable changes to bastra-recall are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Public `fixtures/sample-vault` smoke fixture so recall quality can be tested
+  from a fresh clone without private data.
+- Security policy, Dependabot config, dependency review, CodeQL, OpenSSF
+  Scorecard, and manual npm publish workflow with provenance.
+- OpenAPI starter spec for REST / ChatGPT Actions integrations.
+
+### Changed
+- Smoke tests now run against the public sample vault.
+- npm packaging is hardened for public workspaces and packaged Skill assets.
+- Homebrew formula builds the full monorepo so daemon hooks and statusline are
+  installed together.
+- Claude Code Stop save-eval hook is opt-in (`--with-stop-hook`) because its
+  multi-line suggestions can add terminal noise.
+
 ## [0.6.0-beta.1] — 2026-05-29
 
 First public (pre-release) build. `0.x` signals the API may still change;

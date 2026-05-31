@@ -80,13 +80,23 @@ The daemon mutates files in the vault. Always set
 BASTRA_VAULT_PATH=/tmp/bastra-dev-vault npm run dev
 ```
 
-There's a `test-vault/` checked in for smoke tests.
-
 ### Smoke-test
 
 ```bash
 npm run smoke
 ```
+
+This uses the public `fixtures/sample-vault` so a fresh clone can verify recall
+quality without private data.
+
+### Package check
+
+```bash
+npm run pack:check
+```
+
+This runs npm pack dry-runs for the publishable workspaces and catches missing
+runtime assets such as the packaged Skill or statusline bundle.
 
 ## Project structure
 

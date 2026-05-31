@@ -53,3 +53,12 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Update-check tests
+        run: npm run test:update
+
+      - name: Smoke test
+        run: npm run smoke
+
+      - name: Package dry-run
+        run: npm run pack:check

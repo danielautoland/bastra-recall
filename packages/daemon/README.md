@@ -35,17 +35,21 @@ For project-level docs (vision, install, REST API, roadmap), see the [top-level 
 | `find_document(query, k?)` | Search documents (PDFs, photos, contracts) |
 | `read_document(id)` | Load extracted text + metadata for a document |
 | `open_document(id)` | macOS-only: open in the system handler |
-| `save_document` / `recategorize_document` / `move_document` | Document write path (Pro Mac-app uses this; OSS callers may need `BASTRA_DOC_WRITES=1`) |
+| `save_document` / `recategorize_document` / `move_document` | Document write path (Pro Mac-app uses this; OSS callers may need `BASTRA_DOCUMENT_WRITE=1`) |
 
 ## Install + register
 
 See the [top-level README](../../README.md). Three paths, in order of friction:
 
-1. **`Install Bastra.command` doubleclick** — installs Homebrew + tap + binary + runs `bastra install all`. Rollout depends on the tap repo (#3).
-2. **`bastra install all`** — single CLI call that registers MCP + Skill + Hooks across Claude Code, Claude Desktop, Cursor.
+1. **`Install Bastra.command` doubleclick** — installs Homebrew + tap + binary + runs `bastra install all`.
+2. **`bastra install all`** — single CLI call that registers MCP + Skill + the default quiet Hooks across Claude Code, Claude Desktop, Cursor.
 3. **Fully manual JSON snippets** — fallback.
 
 All paths end with the daemon reachable on `http://127.0.0.1:6723` and the client configs patched.
+Use `bastra doctor --fix` to repair stale paths, missing required hooks, or a
+stale Skill copy after an update. The Stop save-eval hook is optional; disabling
+it intentionally does not make Doctor fail. Enable it explicitly with
+`bastra install claude-code --with-stop-hook`.
 
 ## Daemon process check
 
@@ -58,9 +62,14 @@ curl -sS http://127.0.0.1:6723/health
 
 Exactly one PID should be listed. Two means a stale daemon is running in parallel — the HTTP port goes to whichever bound first, and the loser exits silently (see http.ts EADDRINUSE handler).
 
-## LaunchAgent (autostart at login)
+## Daemon startup
 
-A LaunchAgent plist template lives at `~/Library/LaunchAgents/ai.n0mad.bastra-recall.plist` once you set it up. Until distribution generates this automatically, see the [top-level README → How it works](../../README.md) and adapt the template manually. Restart after edits: `launchctl kickstart -k gui/$(id -u)/ai.n0mad.bastra-recall`.
+The MCP forwarder auto-spawns one shared daemon on first use. For REST clients
+that need the daemon before an MCP client connects, start it explicitly:
+
+```bash
+bastra-recall &
+```
 
 ## Dev workflow
 
@@ -68,7 +77,7 @@ A LaunchAgent plist template lives at `~/Library/LaunchAgents/ai.n0mad.bastra-re
 npm run dev                # ts-watch via tsx (no compile step)
 npm run build              # tsc + chmod +x all dist binaries
 npm run check:types        # type-check only
-npm run smoke              # smoke-test recall against the migration vault
+npm run smoke              # smoke-test recall against fixtures/sample-vault
 npm run smoke:telemetry    # smoke-test telemetry append
 npm run backfill:related   # populate related_via on legacy memories
 ```
@@ -89,6 +98,7 @@ npm run backfill:related   # populate related_via on legacy memories
 | `OPENAI_API_KEY` | no | unset | required when `BASTRA_EMBEDDING_PROVIDER=openai` |
 | `BASTRA_FORWARDER_SPAWN` | no | `1` | when `0`, the MCP forwarder will not auto-spawn the daemon |
 | `BASTRA_HOOK_TIMEOUT_MS` | no | `500` | per-hook wall-clock budget before fail-silent |
+| `BASTRA_DOCUMENT_WRITE` | no | unset | set to `1` to expose document write tools |
 | `BASTRA_LOG_PATH` | no | `~/.bastra/logs` | telemetry JSONL output directory (out-of-vault on purpose) |
 | `BASTRA_TELEMETRY` | no | `on` | set to `off` to disable telemetry writes entirely |
 

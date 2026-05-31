@@ -3,8 +3,10 @@
   "version": "0.6.0-beta.1",
   "description": "MCP server exposing recall + load_memory over a markdown vault.",
   "type": "module",
-  "private": true,
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },
@@ -22,9 +24,16 @@
     "bastra-recall-stop-hook": "./dist/stop-hook.js"
   },
   "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "skill/SKILL.md",
+    "README.md"
+  ],
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc && chmod +x dist/index.js dist/mcp-forwarder.js dist/bridge.js dist/hook.js dist/session-hook.js dist/prompt-hook.js dist/todo-hook.js dist/bash-pre-hook.js dist/bash-fail-hook.js dist/stop-hook.js dist/cli.js",
+    "prepare:package-assets": "node scripts/prepare-package-assets.mjs",
+    "prepack": "npm run prepare:package-assets",
     "start": "node dist/index.js",
     "check:types": "tsc --noEmit",
     "test": "tsx --test __tests__/**/*.test.ts",
@@ -36,7 +45,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
-    "@bastra-recall/core": "*",
+    "@bastra-recall/core": "0.6.0-beta.1",
+    "@bastra-recall/statusline": "0.6.0-beta.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

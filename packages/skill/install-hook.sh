@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Install / update the full bastra-recall reflex layer in ~/.claude/settings.json.
+# Install / update the bastra-recall reflex layer in ~/.claude/settings.json.
 #
-# Registers all seven hooks (issue #1):
+# Registers the default hook set:
 #   - SessionStart    → preload preferences + active-project facts
 #   - UserPromptSubmit → lookup-mode recall on retrieval prompts (#33)
 #   - PreToolUse Write/Edit/MultiEdit/NotebookEdit → topic recall (#20 #28 #32)
 #   - PreToolUse TodoWrite → topology recall before plans (#36)
 #   - PreToolUse Bash → safety recall before destructive ops (#34)
 #   - PostToolUse Bash → lesson recall when a command fails (#37)
-#   - Stop            → autonomous save-eval (#35)
+#   - Stop            → optional autonomous save-eval (#35), off by default
 #
 # Idempotent: re-running strips our previous entries (by __bastraRecall marker
 # or dist path) and re-adds them with current paths; will not duplicate. Cleans
@@ -17,6 +17,7 @@
 #
 # Usage:
 #   bash packages/skill/install-hook.sh                # install
+#   bash packages/skill/install-hook.sh --with-stop-hook  # install incl. Stop hook
 #   bash packages/skill/install-hook.sh --uninstall    # remove
 #   bash packages/skill/install-hook.sh --print        # dry-run, print resulting JSON
 
@@ -30,10 +31,12 @@ HOOK_FILES=(
 )
 SETTINGS_FILE="${HOME}/.claude/settings.json"
 ACTION="install"
+WITH_STOP="0"
 for arg in "$@"; do
   case "$arg" in
     --uninstall) ACTION="uninstall" ;;
     --print) ACTION="print" ;;
+    --with-stop|--with-stop-hook) WITH_STOP="1" ;;
     *) echo "unknown flag: $arg" >&2 ; exit 2 ;;
   esac
 done
@@ -58,7 +61,7 @@ if [[ "$ACTION" != "print" ]]; then
 fi
 
 # Patch JSON via inline Node — robust against existing hook entries.
-DAEMON_DIST="${DAEMON_DIST}" SETTINGS_FILE="${SETTINGS_FILE}" ACTION="${ACTION}" \
+DAEMON_DIST="${DAEMON_DIST}" SETTINGS_FILE="${SETTINGS_FILE}" ACTION="${ACTION}" WITH_STOP="${WITH_STOP}" \
   node --input-type=module -e '
 import { readFileSync, writeFileSync } from "node:fs";
 import { stdout } from "node:process";
@@ -66,6 +69,7 @@ import { stdout } from "node:process";
 const file = process.env.SETTINGS_FILE;
 const dist = process.env.DAEMON_DIST;
 const action = process.env.ACTION;
+const withStop = process.env.WITH_STOP === "1";
 const bin = (f) => `${dist}/${f}`;
 
 // Single source of truth — mirrors packages/daemon/src/cli/adapters/claude-code.ts.
@@ -76,8 +80,10 @@ const DEFS = [
   { event: "PreToolUse", matcher: "TodoWrite", file: "todo-hook.js", timeout: 2, note: "bastra-recall TodoWrite hook (topology-recall, #36)" },
   { event: "PreToolUse", matcher: "Bash", file: "bash-pre-hook.js", timeout: 2, note: "bastra-recall Bash-pre hook (safety, #34)" },
   { event: "PostToolUse", matcher: "Bash", file: "bash-fail-hook.js", timeout: 2, note: "bastra-recall Bash-fail hook (lesson recall on fail, #37)" },
-  { event: "Stop", file: "stop-hook.js", timeout: 3, note: "bastra-recall Stop hook (autonomous save-eval, #35)" },
 ];
+if (withStop) {
+  DEFS.push({ event: "Stop", file: "stop-hook.js", timeout: 3, note: "bastra-recall Stop hook (optional autonomous save-eval, #35)" });
+}
 const EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"];
 const OUR_FILES = ["hook.js", "session-hook.js", "prompt-hook.js", "todo-hook.js", "bash-pre-hook.js", "bash-fail-hook.js", "stop-hook.js"];
 
@@ -139,7 +145,12 @@ if (action === "print") {
 case "$ACTION" in
   install)
     echo "✓ bastra-recall reflex layer registered in ${SETTINGS_FILE}"
-    echo "  7 hooks: SessionStart · UserPromptSubmit · PreToolUse(Write/Edit, TodoWrite, Bash) · PostToolUse(Bash) · Stop"
+    if [[ "${WITH_STOP}" == "1" ]]; then
+      echo "  7 hooks: SessionStart · UserPromptSubmit · PreToolUse(Write/Edit, TodoWrite, Bash) · PostToolUse(Bash) · Stop"
+    else
+      echo "  6 hooks: SessionStart · UserPromptSubmit · PreToolUse(Write/Edit, TodoWrite, Bash) · PostToolUse(Bash)"
+      echo "  Stop hook is optional/off. Re-run with --with-stop-hook to enable save-eval."
+    fi
     echo "  Binaries: ${DAEMON_DIST}/{${HOOK_FILES[*]}}"
     echo "  Backup:   ${SETTINGS_FILE}.bak"
     echo

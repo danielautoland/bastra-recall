@@ -25,38 +25,58 @@ After `npm run build` the daemon package exposes these bin entries:
 | `bastra-recall-todo-hook`         | `PreToolUse`       | `TodoWrite`                               | Topology recall before multi-step plans (#36)             |
 | `bastra-recall-bash-pre-hook`     | `PreToolUse`       | `Bash` (destructive/risky)                | Safety recall before destructive shell ops (#34)          |
 | `bastra-recall-bash-fail-hook`    | `PostToolUse`      | `Bash` (non-zero exit)                    | Lesson recall when a Bash command fails (#37)             |
-| `bastra-recall-stop-hook`         | `Stop`             | —                                         | Autonomous save-eval at end of session (#35)              |
+| `bastra-recall-stop-hook`         | `Stop`             | —                                         | Optional autonomous save-eval at end of session (#35)      |
 
 ## Activation snippet for `~/.claude/settings.json`
 
-Full shape with every hook enabled:
+Default shape written by `bastra install claude-code`:
 
 ```json
 {
   "hooks": {
     "SessionStart": [
-      { "command": "bastra-recall-session-hook" }
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [{ "type": "command", "command": "bastra-recall-session-hook", "timeout": 3 }]
+      }
     ],
     "UserPromptSubmit": [
-      { "command": "bastra-recall-prompt-hook" }
+      {
+        "hooks": [{ "type": "command", "command": "bastra-recall-prompt-hook", "timeout": 2 }]
+      }
     ],
     "PreToolUse": [
-      { "matcher": "Write|Edit|MultiEdit|NotebookEdit", "command": "bastra-recall-hook" },
-      { "matcher": "TodoWrite", "command": "bastra-recall-todo-hook" },
-      { "matcher": "Bash", "command": "bastra-recall-bash-pre-hook" }
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [{ "type": "command", "command": "bastra-recall-hook", "timeout": 2 }]
+      },
+      {
+        "matcher": "TodoWrite",
+        "hooks": [{ "type": "command", "command": "bastra-recall-todo-hook", "timeout": 2 }]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "bastra-recall-bash-pre-hook", "timeout": 2 }]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "Bash", "command": "bastra-recall-bash-fail-hook" }
-    ],
-    "Stop": [
-      { "command": "bastra-recall-stop-hook" }
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "bastra-recall-bash-fail-hook", "timeout": 2 }]
+      }
     ]
   }
 }
 ```
 
-The bins are installed by `npm install -g @bastra-recall/daemon` (or via the
-Bastra Mac app's "install Claude Code hooks" action).
+The bins are installed by Homebrew or `npm install -g @bastra-recall/daemon`.
+Prefer `bastra install claude-code`; it writes the exact shape above, keeps
+foreign hook entries, and backs up the settings file first.
+
+The Stop hook is optional because it can emit multi-line save-eval suggestions
+at turn end. Enable it explicitly with `bastra install claude-code
+--with-stop-hook`. If you remove only `bastra-recall-stop-hook`, Doctor reports
+it as intentionally disabled instead of broken.
 
 ## Per-hook behavior
 
@@ -130,9 +150,9 @@ Throttled to one hint per 30 s per session (marker file in
 Telemetry: `bash_fail_hook_call` with `exit_code, command_head, hit_count,
 top_score, status`.
 
-### `bastra-recall-stop-hook` (#35)
+### `bastra-recall-stop-hook` (#35, opt-in)
 
-Fires on `Stop`. Reads the last ~30 transcript turns (from
+Fires on `Stop` when explicitly installed via `--with-stop-hook`. Reads the last ~30 transcript turns (from
 `payload.transcript_path` or inline `payload.transcript`) and evaluates
 three heuristics:
 
@@ -149,7 +169,7 @@ three heuristics:
 3. **architecture-decision** — `ok dann | lass uns | entschieden | final |
    gehen wir mit` in last 5 user turns → suggests a `decision` save.
 
-Output is one or more `<save-eval>` blocks suggesting title/type/body. The
+Output is one or more multi-line `<save-eval>` blocks suggesting title/type/body. The
 hook **never calls `save_memory` itself** — only the agent does, in the next
 turn, if it agrees with the suggestion.
 

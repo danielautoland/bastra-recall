@@ -8,14 +8,14 @@
  * for each (query, k, verbosity) combination, plus the lean-vs-full saving.
  *
  * Run: BASTRA_VAULT_PATH=/path/to/vault tsx scripts/measure-recall-payload.ts
- *      (defaults to the migration vault, like scripts/smoke.ts)
+ *      (defaults to the public sample vault)
  */
 import { Vault, SearchIndex } from "@bastra-recall/core";
 import { resolve } from "node:path";
 import { Telemetry } from "../src/telemetry.js";
 import { recallHandler, type ToolDeps } from "../src/tool-handlers.js";
 
-const DEFAULT_VAULT = resolve(import.meta.dirname, "../../../private/migration/memorys");
+const DEFAULT_VAULT = resolve(import.meta.dirname, "../../../fixtures/sample-vault");
 const VAULT = process.env.BASTRA_VAULT_PATH ?? process.env.NEXUS_VAULT_PATH ?? DEFAULT_VAULT;
 
 const QUERIES = [

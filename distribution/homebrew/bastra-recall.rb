@@ -22,16 +22,24 @@ class BastraRecall < Formula
 
   def install
     system "npm", "install"
-    system "npm", "run", "build", "--workspace", "@bastra-recall/daemon"
+    system "npm", "run", "build"
+    system "npm", "prune", "--omit=dev"
 
-    libexec.install "packages", "package.json", "package-lock.json"
+    libexec.install "packages", "node_modules", "package.json", "package-lock.json"
 
     # CLI + daemon binaries -> bin shims
     bin.install_symlink libexec/"packages/daemon/dist/cli.js" => "bastra"
     bin.install_symlink libexec/"packages/daemon/dist/index.js" => "bastra-recall"
     bin.install_symlink libexec/"packages/daemon/dist/mcp-forwarder.js" => "bastra-recall-mcp"
+    bin.install_symlink libexec/"packages/daemon/dist/bridge.js" => "bastra-recall-bridge"
     bin.install_symlink libexec/"packages/daemon/dist/hook.js" => "bastra-recall-hook"
     bin.install_symlink libexec/"packages/daemon/dist/session-hook.js" => "bastra-recall-session-hook"
+    bin.install_symlink libexec/"packages/daemon/dist/prompt-hook.js" => "bastra-recall-prompt-hook"
+    bin.install_symlink libexec/"packages/daemon/dist/todo-hook.js" => "bastra-recall-todo-hook"
+    bin.install_symlink libexec/"packages/daemon/dist/bash-pre-hook.js" => "bastra-recall-bash-pre-hook"
+    bin.install_symlink libexec/"packages/daemon/dist/bash-fail-hook.js" => "bastra-recall-bash-fail-hook"
+    bin.install_symlink libexec/"packages/daemon/dist/stop-hook.js" => "bastra-recall-stop-hook"
+    bin.install_symlink libexec/"packages/statusline/bin/claude-powerline" => "bastra-statusline"
   end
 
   def caveats
@@ -42,10 +50,9 @@ class BastraRecall < Formula
       That registers bastra-recall with every supported AI client
       (Claude Code, Claude Desktop, Cursor) and verifies the install.
 
-      The daemon does not auto-start yet. Either:
-        • Run it manually:   bastra-recall &
-        • Or use the LaunchAgent plist in ~/Library/LaunchAgents/
-          (see distribution/launchagent/ in the repo for a template)
+      The MCP forwarder auto-starts the daemon on first use. To start it
+      eagerly for REST clients:
+        bastra-recall &
 
       Vault path: pass --vault, set BASTRA_VAULT_PATH, or let the CLI
       auto-detect from an existing claude.json registration.

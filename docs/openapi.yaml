@@ -1,0 +1,324 @@
+openapi: 3.0.3
+info:
+  title: Bastra.Recall REST API
+  version: 0.6.0-beta.1
+  description: |
+    Loopback REST API exposed by the bastra-recall daemon. For hosted clients
+    such as ChatGPT Actions, expose `127.0.0.1:6723` through a tunnel and set
+    `BASTRA_API_TOKEN`.
+servers:
+  - url: http://127.0.0.1:6723/api/v1
+security:
+  - bearerAuth: []
+paths:
+  /recall:
+    post:
+      operationId: recall
+      summary: Search memories
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecallRequest"
+      responses:
+        "200":
+          description: Recall candidates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecallResponse"
+  /load_memory:
+    post:
+      operationId: loadMemory
+      summary: Load one memory by id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+                verbosity:
+                  type: string
+                  enum: [lean, full]
+      responses:
+        "200":
+          description: Memory content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoadMemoryResponse"
+  /save_memory:
+    post:
+      operationId: saveMemory
+      summary: Save a new or overwritten memory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveMemoryRequest"
+      responses:
+        "200":
+          description: Save result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, file_path, created]
+                properties:
+                  id:
+                    type: string
+                  file_path:
+                    type: string
+                  created:
+                    type: boolean
+                  summary_note:
+                    type: string
+  /find_document:
+    post:
+      operationId: findDocument
+      summary: Search document sidecars
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                k:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+      responses:
+        "200":
+          description: Document candidates
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /read_document:
+    post:
+      operationId: readDocument
+      summary: Read one document sidecar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+      responses:
+        "200":
+          description: Document content
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /open_document:
+    post:
+      operationId: openDocument
+      summary: Open a document on macOS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+      responses:
+        "200":
+          description: Open result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /save_document:
+    post:
+      operationId: saveDocument
+      summary: Save or link a document sidecar
+      description: Requires `BASTRA_DOCUMENT_WRITE=1` on the daemon.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Save result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /recategorize_document:
+    post:
+      operationId: recategorizeDocument
+      summary: Update document metadata
+      description: Requires `BASTRA_DOCUMENT_WRITE=1` on the daemon.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /move_document:
+    post:
+      operationId: moveDocument
+      summary: Move a document sidecar and original file reference
+      description: Requires `BASTRA_DOCUMENT_WRITE=1` on the daemon.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Move result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    RecallRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+        k:
+          type: integer
+          minimum: 1
+          maximum: 20
+        scope:
+          type: string
+        type:
+          type: string
+        expand_hops:
+          type: integer
+          enum: [0, 1]
+        verbosity:
+          type: string
+          enum: [lean, full]
+        min_score:
+          type: number
+    RecallResponse:
+      type: object
+      required: [query, vault_size, hits, recall_id, latency_ms]
+      properties:
+        query:
+          type: string
+        vault_size:
+          type: integer
+        recall_id:
+          type: string
+        latency_ms:
+          type: integer
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecallHit"
+    RecallHit:
+      type: object
+      required: [id, title, type, scope, summary, score]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+        scope:
+          type: string
+        summary:
+          type: string
+        score:
+          type: number
+    LoadMemoryResponse:
+      type: object
+      required: [id, frontmatter, body, file_path]
+      properties:
+        id:
+          type: string
+        frontmatter:
+          type: object
+          additionalProperties: true
+        body:
+          type: string
+        file_path:
+          type: string
+    SaveMemoryRequest:
+      type: object
+      required: [title, type, summary, body, topic_path, tags, scope, recall_when]
+      properties:
+        title:
+          type: string
+        type:
+          type: string
+          enum: [lesson, preference, project-fact, meta-working, decision, workflow, reference, user-preference, bookmark, doc]
+        summary:
+          type: string
+        body:
+          type: string
+        topic_path:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        scope:
+          type: string
+        recall_when:
+          type: array
+          items:
+            type: string
+        sensitivity:
+          type: string
+          enum: [private, team, public]
+        related:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        overwrite:
+          type: boolean

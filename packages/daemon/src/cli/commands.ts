@@ -15,6 +15,7 @@ Commands:
   update                     brew upgrade (if brew-installed) + re-register +
                              daemon restart. Use this after pulling new code.
   doctor [surface|all]       Check status of one or every surface
+  doctor [surface|all] --fix Check status and repair missing/broken pieces
   help                       Show this help
   version                    Show version
 
@@ -28,6 +29,8 @@ Options:
   --dry-run                  Print what would change; write nothing
   --yes, -y                  Skip confirmation prompts (replace a foreign statusLine)
   --vault <path>             Vault path (BASTRA_VAULT_PATH env also works)
+  --fix                      With doctor: repair non-ok surfaces (on 'all', won't set up ones never installed)
+  --with-stop-hook           Install optional Stop save-eval hook
   --help, -h                 Show this help
   --version, -v              Show version
 
@@ -54,6 +57,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     showHelp: false,
     showVersion: false,
     yes: false,
+    fix: false,
+    withStopHook: false,
   };
 
   const positional: string[] = [];
@@ -63,6 +68,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
     else if (a === "--version" || a === "-v") result.showVersion = true;
     else if (a === "--dry-run") result.dryRun = true;
     else if (a === "--yes" || a === "-y") result.yes = true;
+    else if (a === "--fix") result.fix = true;
+    else if (a === "--with-stop-hook") result.withStopHook = true;
     else if (a === "--vault") {
       result.vaultPath = argv[++i] ?? null;
     } else if (a.startsWith("--vault=")) {
@@ -91,7 +98,12 @@ export async function cmdInstall(args: ParsedArgs): Promise<number> {
   }
 
   const vaultPath = resolveVaultPath(args.vaultPath);
-  const opts: InstallOpts = { dryRun: args.dryRun, vaultPath, force: args.yes };
+  const opts: InstallOpts = {
+    dryRun: args.dryRun,
+    vaultPath,
+    force: args.yes,
+    withStopHook: args.withStopHook,
+  };
 
   let hadError = false;
   for (const adapter of targets) {
@@ -138,27 +150,45 @@ export async function cmdUninstall(args: ParsedArgs): Promise<number> {
 
 export async function cmdDoctor(args: ParsedArgs): Promise<number> {
   const surface = args.surface ?? "all";
+  // An explicitly named surface may be installed from scratch by --fix; on the
+  // default 'all' we only repair surfaces that already exist, never silently
+  // set up ones the user never asked for.
+  const fixMissing = surface !== "all";
   const targets = resolveTargets(surface);
   if ("error" in targets) {
     process.stderr.write(`error: ${targets.error}\n`);
     return 2;
   }
 
+  let hadBroken = false;
   for (const adapter of targets) {
     process.stdout.write(`→ ${adapter.surface} (${adapter.description})\n`);
     process.stdout.write(`  config: ${adapter.configPath}\n`);
     try {
       const r = await adapter.doctor();
       process.stdout.write(`  ${formatStatus(r.status)}: ${r.message}\n`);
+      if (r.status === "broken" && !args.fix) hadBroken = true;
       if (r.details) {
         for (const [k, v] of Object.entries(r.details)) {
           process.stdout.write(`    ${k}: ${v}\n`);
         }
       }
+      if (args.fix && r.status !== "ok" && (r.status !== "missing" || fixMissing)) {
+        const fix = await adapter.install({
+          dryRun: args.dryRun,
+          vaultPath: resolveVaultPath(args.vaultPath),
+          force: args.yes,
+          withStopHook: args.withStopHook,
+        });
+        process.stdout.write(`  fix: ${formatStatus(fix.status)}: ${fix.message}\n`);
+        if (fix.backupPath) process.stdout.write(`  backup: ${fix.backupPath}\n`);
+        if (fix.status === "error" || fix.status === "not-implemented") hadBroken = true;
+      }
     } catch (err) {
+      hadBroken = true;
       process.stdout.write(`  error: ${(err as Error).message}\n`);
     }
     process.stdout.write("\n");
   }
-  return 0;
+  return hadBroken ? 1 : 0;
 }

@@ -16,7 +16,9 @@
     "build": "npm run build --workspaces --if-present",
     "check:types": "npm run check:types --workspaces --if-present",
     "test": "node --import tsx --test packages/core/__tests__/*.test.ts packages/daemon/__tests__/*.test.ts",
+    "test:update": "npm run test:update --workspace=@bastra-recall/daemon",
     "smoke": "npm run smoke --workspace=@bastra-recall/daemon",
-    "smoke:telemetry": "npm run smoke:telemetry --workspace=@bastra-recall/daemon"
+    "smoke:telemetry": "npm run smoke:telemetry --workspace=@bastra-recall/daemon",
+    "pack:check": "npm pack --dry-run --workspace=@bastra-recall/core && npm pack --dry-run --workspace=@bastra-recall/statusline && npm pack --dry-run --workspace=@bastra-recall/daemon"
   }
 }

@@ -1,8 +1,8 @@
 /**
  * Smoke test — verify Vault + SearchIndex work end-to-end against
- * the migration-vault on disk. Does NOT touch the MCP transport.
+ * the public sample vault on disk. Does NOT touch the MCP transport.
  *
- * Run: NEXUS_VAULT_PATH=/path/to/vault tsx scripts/smoke.ts
+ * Run: BASTRA_VAULT_PATH=/path/to/vault tsx scripts/smoke.ts
  *      (or: npm run smoke  — picks up env from default below)
  */
 import { Vault, SearchIndex } from "@bastra-recall/core";
@@ -10,15 +10,15 @@ import { resolve } from "node:path";
 
 const DEFAULT_VAULT = resolve(
   import.meta.dirname,
-  "../../../private/migration/memorys",
+  "../../../fixtures/sample-vault",
 );
 const VAULT = process.env.BASTRA_VAULT_PATH ?? process.env.NEXUS_VAULT_PATH ?? DEFAULT_VAULT;
 
 const QUERIES: { query: string; expectIds?: string[] }[] = [
-  { query: "scrollbar", expectIds: ["carnexus-scrollbar-subtle-pattern"] },
+  { query: "scrollbar", expectIds: ["ui-scrollbar-subtle-pattern"] },
   {
     query: "neuen input bauen",
-    expectIds: ["carnexus-input-focus-border-global-red"],
+    expectIds: ["css-input-focus-ring-stacking"],
   },
   {
     query: "git commit",
@@ -26,19 +26,19 @@ const QUERIES: { query: string; expectIds?: string[] }[] = [
   },
   {
     query: "kompliziert in css",
-    expectIds: ["lesson-css-pixel-fix-one-value-at-a-time"],
+    expectIds: ["lesson-css-one-value-at-a-time"],
   },
   {
     query: "modal mit blur",
-    expectIds: ["carnexus-modal-pattern-blur-backdrop"],
+    expectIds: ["ui-modal-blur-backdrop-pattern"],
   },
   {
     query: "schadensbild pdf",
-    expectIds: ["carnexus-v11-vs-legacy-damage-images-schema"],
+    expectIds: ["docs-damage-image-pdf-schema"],
   },
   {
     query: "soll ich phase 5 architektur dazubauen",
-    expectIds: ["nexus-recall-no-overengineering"],
+    expectIds: ["pref-no-overengineering-without-signal"],
   },
 ];
 
